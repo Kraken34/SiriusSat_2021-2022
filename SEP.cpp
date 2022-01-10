@@ -29,6 +29,8 @@
 
 bool sep_state = false; // true, если спутник отделился
 bool low_volt = false; // true при пониженном заряде
+bool cur_pwr_state = false; // текущее состояние линий питания, используется для проверки
+
 unsigned long last_time = 0;
 byte bc_code = 0;
 float total_bat, bat_volt, solar_volt = 0;
@@ -73,7 +75,9 @@ void loop() {
 
 byte pwr_on(bool pwr_state) {
   byte en_pins[4] = {EN_ESC_pin, EN_BC_pin, EN_BUSOS_pin, EN_BUEMU_pin};
-  int start_timeout = pwr_state ? START_TIMEOUT : 0;
+  // если вызываем первый раз с true, то интервал между включениями линий питания составит START_TIMEOUT мс.
+  // если вызываем с false, или если питание уже подано, задерджки не будет
+  int start_timeout = (pwr_state && !cur_pwr_state) ? START_TIMEOUT : 0;
   byte pin_num = 0;
 
   while (pin_num < 4) {
@@ -82,6 +86,7 @@ byte pwr_on(bool pwr_state) {
       last_time = millis();
     }
   }
+  cur_pwr_state = pwr_state;
   return 0;
 }
 
