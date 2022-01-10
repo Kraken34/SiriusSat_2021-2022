@@ -1,3 +1,4 @@
+
 #include <Wire.h>
 #include <EEPROM.h>
 
@@ -28,6 +29,8 @@
 
 bool sep_state = false; // true, если спутник отделился
 bool low_volt = false; // true при пониженном заряде
+bool cur_pwr_state = false; // текущее состояние линий питания, используется для проверки
+
 unsigned long last_time = 0;
 byte bc_code = 0;
 float total_bat, bat_volt, solar_volt = 0;
@@ -57,12 +60,13 @@ void loop() {
   bool btn1, btn2;
   btn1 = digitalRead(BTN_1_pin);
   btn2 = digitalRead(BTN_2_pin);
-  sep_state = (btn1 || btn2);
+  sep_state = (btn1 || btn2); // для запуска должен быть true, когда кнопки отпущены. если кнопки в нажатом состоянии подтянуты к плюсу, а не к земле, то инвертировать
 
   // измеряем напругу
-  total_bat = map(analogRead(TOTAL_BAT_MES_pin), 0, 1023, 0, 10.0);
-  bat_volt = map(analogRead(BAT_MES_pin), 0, 1023, 0.0, 5.0);
-  solar_volt = map(analogRead(SOLAR_MES_pin), 0, 1023, 0.0, 10.0);
+  total_bat = analogRead(TOTAL_BAT_MES_pin) * 10.0/1023.0;  // напряжение с делителя
+  bat_volt = analogRead(BAT_MES_pin) * 5.0/1023.0;  // напряжение на акб
+  solar_volt = analogRead(SOLAR_MES_pin) * 10.0/1023.0; // напряжение с bms
+  
   low_volt = (total_bat <= TOTAL_LOW_VOLT) || (bat_volt <= BAT_LOW_VOLT);
 
   // если произошло разделение и напряжение в норме, даем питание. если напряжение упало, снимаем
@@ -71,7 +75,9 @@ void loop() {
 
 byte pwr_on(bool pwr_state) {
   byte en_pins[4] = {EN_ESC_pin, EN_BC_pin, EN_BUSOS_pin, EN_BUEMU_pin};
-  int start_timeout = pwr_state ? START_TIMEOUT : 0;
+  // если вызываем первый раз с true, то интервал между включениями линий питания составит START_TIMEOUT мс.
+  // если вызываем с false, или если питание уже подано, задерджки не будет
+  int start_timeout = (pwr_state && !cur_pwr_state) ? START_TIMEOUT : 0;
   byte pin_num = 0;
 
   while (pin_num < 4) {
@@ -80,6 +86,7 @@ byte pwr_on(bool pwr_state) {
       last_time = millis();
     }
   }
+  cur_pwr_state = pwr_state;
   return 0;
 }
 
