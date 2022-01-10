@@ -1,3 +1,4 @@
+
 #include <Wire.h>
 #include <EEPROM.h>
 
@@ -57,12 +58,13 @@ void loop() {
   bool btn1, btn2;
   btn1 = digitalRead(BTN_1_pin);
   btn2 = digitalRead(BTN_2_pin);
-  sep_state = (btn1 || btn2);
+  sep_state = (btn1 || btn2); // для запуска должен быть true, когда кнопки отпущены. если кнопки в нажатом состоянии подтянуты к плюсу, а не к земле, то инвертировать
 
   // измеряем напругу
-  total_bat = map(analogRead(TOTAL_BAT_MES_pin), 0, 1023, 0, 10.0);
-  bat_volt = map(analogRead(BAT_MES_pin), 0, 1023, 0.0, 5.0);
-  solar_volt = map(analogRead(SOLAR_MES_pin), 0, 1023, 0.0, 10.0);
+  total_bat = analogRead(TOTAL_BAT_MES_pin) * 10.0/1023.0;  // напряжение с делителя
+  bat_volt = analogRead(BAT_MES_pin) * 5.0/1023.0;  // напряжение на акб
+  solar_volt = analogRead(SOLAR_MES_pin) * 10.0/1023.0; // напряжение с bms
+  
   low_volt = (total_bat <= TOTAL_LOW_VOLT) || (bat_volt <= BAT_LOW_VOLT);
 
   // если произошло разделение и напряжение в норме, даем питание. если напряжение упало, снимаем
