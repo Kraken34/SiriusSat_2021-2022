@@ -1,9 +1,10 @@
 #pragma GCC optimize ("Og")
 
+// Недостаточно FLASH памяти, чтобы подключить библиотеку IMU и работать с ней
+// Поэтому данные обновляются через БУСОС по I2C
+// <TroykaIMU.h>
 #include <SoftwareSerial.h>
 #include <SPI.h>
-#include <TroykaIMU.h>
-//#include <GOST4401_81.h>
 
 #include <SD.h>
 #define PIN_CHIP_SELECT 8
@@ -32,29 +33,30 @@
 #define NRF_RX_PACKET_SIZE 20
 #define NRF_TX_PACKET_SIZE 32
 
-/* Интервалы, специально сделаны переменными, чтобы
-/* менять во время выполнения программы, но пока не реализовано */
+// Мнимально допустимый интревал
 #define MIN_INTERVAL_VALUE 10
-uint16_t gpsUpdateInterval = 1000;
-uint16_t imuUpdateInterval = 1000;
-uint16_t phtUpdateInterval = 1000;
-uint16_t akbUpdateInterval = 1000;
-uint16_t gpsSendInterval =   1000;
-uint16_t imuSendInterval =   1000;
-uint16_t phtSendInterval =   1000;
-uint16_t sdWriteInterval =   1000;
+#define gpsUpdateInterval 1000
+#define imuUpdateInterval 1000
+#define phtUpdateInterval 1000
+#define akbUpdateInterval 1000
+#define gpsSendInterval   1000
+#define imuSendInterval   1000
+#define phtSendInterval   1000
+#define sdWriteInterval   1000
 
 // Флаги
 #define FLG_BUSOS_UPDATE_IMU   0x01
 #define FLG_CALIB_RNG_READED   0x02
 #define SD_CARD_INITIALIZATRED 0x04
+#define GPS_READY              0x08
 uint8_t FLAGS = FLG_BUSOS_UPDATE_IMU;
 
 SoftwareSerial gpsSerial(RX_GPS_PIN, TX_GPS_PIN);
-Gyroscope      gyroscope;
-Accelerometer  accelerometer;
-Compass        compass;
-Barometer      barometer;
+// Недостаточно FLASH памяти, чтобы подключить библиотеку IMU и работать с ней
+//Gyroscope      gyroscope;
+//Accelerometer  accelerometer;
+//Compass        compass;
+//Barometer      barometer;
 GPS            gps(gpsSerial);
 RF24           nrf24(9, 10);
 
@@ -81,17 +83,22 @@ struct Datetime {
     uint8_t second;
 };
 
-// Глобальные переменные
+// Количество спутников
 uint8_t stlCount = 0;
+// Дата и время с GPS
 Datetime gpsDatetime;
+// Координаты
 float gpsLatitude = 0,  gpsLongitude = 0, gpsAltitude = 0, azimut = 0, altitude = 0;
+// Скорость
 int16_t gpsSpeed = 0;
+// Напряжения
 float mainVoltage = 0, batteryVoltage = 0, solarVoltage = 0;
+// Остальное
 float press = 0, temp = 0;
+uint16_t phtValues[8];
+Range phtCalibRange[8];
 Vector gyro, acl, mgn;
 Euler rotateAngle;
-uint16_t phtValues[8] = {};
-Range phtCalibRange[8];
 
 // Обновление данных
 void updateAkbData() {
@@ -143,22 +150,22 @@ void updateIMUData() {
         mgn.z = readFloatI2C(-16000, 16000, 65535, 2);
     }
     else {
-        accelerometer.readAccelerationAXYZ(acl.x, acl.y, acl.z);
+		// Недостаточно FLASH памяти, чтобы подключить библиотеку IMU и работать с ней
+        //accelerometer.readAccelerationAXYZ(acl.x, acl.y, acl.z);
 
-        compass.readMagneticGaussXYZ(mgn.x, mgn.y, mgn.z);
+        //compass.readMagneticGaussXYZ(mgn.x, mgn.y, mgn.z);
 
-        gyroscope.readRotationDegXYZ(gyro.x, gyro.y, gyro.z);
-        azimut = compass.readAzimut();
+        //gyroscope.readRotationDegXYZ(gyro.x, gyro.y, gyro.z);
+        //azimut = compass.readAzimut();
 
-        temp = barometer.readTemperatureC();
-        press = barometer.readPressurePascals();
-        altitude = 0;//GOST4401_getAltitude(press);
+        //temp = barometer.readTemperatureC();
+        //press = barometer.readPressurePascals();
     }
 }
 void updateGPSData() {
   if (gps.available()) {
     gps.readParsing();
-    // проверка состояния GPS-модуля
+    // Проверка состояния GPS
     switch (gps.getState()) {
       case GPS_OK:
         // Координаты
@@ -177,12 +184,8 @@ void updateGPSData() {
         gpsDatetime.month = gps.getMonth();
         gpsDatetime.year = gps.getYear();
         break;
-      case GPS_ERROR_DATA:
-        //Serial.println("GPS error data");
-        break;
-      case GPS_ERROR_SAT:
-        //Serial.println("GPS no connect to satellites!!!");
-        break;
+      case GPS_ERROR_DATA: break;
+      case GPS_ERROR_SAT: break;
     }
   }
 }
@@ -190,40 +193,56 @@ void updateGPSData() {
 // Запись данных на карту
 void sdWriteData() {}
 
-// Настройка модулей
+// Проверка позиции
+bool isTargetPosition() {
+    if (FLAGS&GPS_READY) {
+        /*  Писать в этом блоке
+         *  gpsLatitude  -  Широта
+         *  gpsLongitude -  Долгота
+         *  gpsAltitude  -  Высота   */
+        return true;
+    }
+    return true;
+}
+
+// Настройка модуля радиосвязи
 void setupNrf() {
   if (!nrf24.begin()) {
-     Serial.println(F("radio hardware is not responding!"));
+	 // ВАЖНО: РАДИОМОДУЛЬ НЕ БУДЕТ РАБОТАТЬ, БЕЗ SD КАРТЫ!
+     // С недочётом сконструированы платы, проблема физическая
+     Serial.println(F("Радиомодуль не подключён или отсутствует SD карта!"));
      while (1) {} // hold in infinite loop
    }
 
-  nrf24.setAutoAck(NRF_AUTO_ACK);         //режим подтверждения приёма, 1 вкл 0 выкл
-  nrf24.enableAckPayload();    //разрешить отсылку данных в ответ на входящий сигнал
-  nrf24.setRetries(NRF_RETRIES_DELAY, NRF_RETRIES_COUNT);    //(время между попыткой достучаться, число попыток)
+  nrf24.setAutoAck(NRF_AUTO_ACK); // режим подтверждения приёма
+  nrf24.enableAckPayload(); //разрешить отсылку данных в ответ на входящий сигнал
+  nrf24.setRetries(NRF_RETRIES_DELAY, NRF_RETRIES_COUNT);
 
-  nrf24.openWritingPipe(NRF_TX_ADDRESS);   //мы - труба 0, открываем канал для передачи данных
+  nrf24.openWritingPipe(NRF_TX_ADDRESS);
   nrf24.openReadingPipe(1, NRF_RX_ADDRESS);
-  nrf24.setChannel(0x60);  //выбираем канал (в котором нет шумов!)
+  nrf24.setChannel(0x60);  // выбираем канал
 
   nrf24.setPALevel (RF24_PA_MIN); //уровень мощности передатчика. На выбор RF24_PA_MIN, RF24_PA_LOW, RF24_PA_HIGH, RF24_PA_MAX
   nrf24.setDataRate (RF24_250KBPS); //скорость обмена. На выбор RF24_2MBPS, RF24_1MBPS, RF24_250KBPS
-  //должна быть одинакова на приёмнике и передатчике!
-  //при самой низкой скорости имеем самую высокую чувствительность и дальность!!
 
-  nrf24.setPayloadSize(NRF_RX_PACKET_SIZE);     //размер пакета, в байтах
-  nrf24.powerUp(); //начать работу
+  nrf24.setPayloadSize(NRF_RX_PACKET_SIZE);
+  nrf24.powerUp();
   nrf24.startListening();
 }
 void setupIMU() {
-    barometer.begin();
-    compass.begin();
-    gyroscope.begin();
-    accelerometer.begin();
+	// Недостаточно FLASH памяти, чтобы подключить библиотеку IMU и работать с ней
+    //barometer.begin();
+    //compass.begin();
+    //gyroscope.begin();
+    //accelerometer.begin();
 
-    compass.setRange(CompassRange::RANGE_8GAUSS);
-    gyroscope.setRange(GyroscopeRange::RANGE_250DPS);
-    accelerometer.setRange(AccelerometerRange::RANGE_8G);
+	// Установка диапазона измерения
+    //compass.setRange(CompassRange::RANGE_8GAUSS);
+    //gyroscope.setRange(GyroscopeRange::RANGE_250DPS);
+    //accelerometer.setRange(AccelerometerRange::RANGE_8G);
 }
+
+// Запрос данных о диапозоне измерения фоторезисторов с БУСОС
 void readPhtCalibRange() {
     Wire.beginTransmission(I2C_BUSOS);
     Wire.write(IC2_CMD_GET_PTH_COEF);
@@ -247,6 +266,7 @@ float readFloatI2C(int32_t minValue, int32_t maxValue, int32_t resolution, uint8
     }
     return static_cast<float>(value) / resolution * (maxValue - minValue) + minValue;
 }
+// Сжатие данных, для более быстрой передачи
 uint32_t floatToUint32(float value, int32_t minValue, int32_t maxValue, int32_t resolution) {
     if (minValue <= value && value <= maxValue) {
         return (value - minValue) * resolution/ (maxValue - minValue);
@@ -267,6 +287,7 @@ uint32_t dateToUint32(Datetime date) {
     data[3] |= (date.second<<2)&0xFC;
     return value;
 }
+// Вычисление контрольной суммы
 uint16_t calcCRC16(uint16_t *data, uint8_t count) {
     uint16_t CRC = 0;
     for (uint8_t i = 0; i < count; ++i) {
@@ -276,15 +297,17 @@ uint16_t calcCRC16(uint16_t *data, uint8_t count) {
     return CRC;
 }
 
-// Отправка данных на землю
+// Отправка данных по радиосвязи
 bool sendImuData() {
     uint8_t data[32];
     uint32_t value;
 
+	// Заголовок
     data[0] = 0x1F;
     data[1] = 0xFF;
     data[2] = 0xFF;
 
+	// Сжатие данных
     value = floatToUint32(press, 26000, 126000, 16777215);
     memcpy(data+3+0, &value, 3);
 
@@ -315,6 +338,7 @@ bool sendImuData() {
     value = millis();
     memcpy(data+3+23, &value, 4);
 
+	// Контрольная сумма
     uint16_t CRC = calcCRC16(reinterpret_cast<uint16_t*>(data), 15);
     memcpy(data+30, &CRC, 2);
 
@@ -324,11 +348,14 @@ bool sendGpsData() {
     uint8_t data[32];
     uint32_t value;
 
+	// Заголовок
     data[0] = 0x24;
     data[1] = 0xFF;
     data[2] = 0xFF;
+	// Неиспользуемые байты
     data[25] = 0xFF;
 
+	// Сжатие данных
     memcpy(data+3+0, &gpsLatitude, 4);
     memcpy(data+3+4, &gpsLongitude, 4);
     memcpy(data+3+8, &gpsAltitude, 4);
@@ -341,6 +368,7 @@ bool sendGpsData() {
     value = millis();
     memcpy(data+3+23, &value, 4);
 
+	// Контрольная сумма
     uint16_t CRC = calcCRC16(reinterpret_cast<uint16_t*>(data), 15);
     memcpy(data+30, &CRC, 2);
 
@@ -349,12 +377,15 @@ bool sendGpsData() {
 bool sendCalibCoef() {
     uint8_t data[32];
 
+	// Заголовок
     data[0] = 0x46;
     data[1] = 0xFF;
     data[2] = 0x01;
+	// Неиспользуемые байты
     data[27] = 0xFF;
     data[28] = 0xFF;
     data[29] = 0xFF;
+	// Данные
     memcpy(data+3, &phtCalibRange[0].min, 4);
     memcpy(data+7, &phtCalibRange[0].max, 4);
     memcpy(data+11, &phtCalibRange[1].min, 4);
@@ -362,10 +393,10 @@ bool sendCalibCoef() {
     memcpy(data+19, &phtCalibRange[2].min, 4);
     memcpy(data+23, &phtCalibRange[2].max, 4);
 
+	// Контрольная сумма
     uint16_t CRC = calcCRC16(reinterpret_cast<uint16_t*>(data), 15);
     memcpy(data+30, &CRC, 2);
     nrf24SendData(data);
-
 
     data[2] = 0x02;
     memcpy(data+3, &phtCalibRange[3].min, 4);
@@ -375,6 +406,7 @@ bool sendCalibCoef() {
     memcpy(data+19, &phtCalibRange[5].min, 4);
     memcpy(data+23, &phtCalibRange[5].max, 4);
 
+	// Контрольная сумма
     CRC = calcCRC16(reinterpret_cast<uint16_t*>(data), 15);
     memcpy(data+30, &CRC, 2);
     nrf24SendData(data);
@@ -385,6 +417,7 @@ bool sendCalibCoef() {
     memcpy(data+7, &phtCalibRange[6].max, 4);
     memcpy(data+11, &phtCalibRange[7].min, 4);
     memcpy(data+15, &phtCalibRange[7].max, 4);
+	// Неиспользуемые байты
     data[19] = 0xFF;
     data[20] = 0xFF;
     data[21] = 0xFF;
@@ -393,7 +426,8 @@ bool sendCalibCoef() {
     data[24] = 0xFF;
     data[25] = 0xFF;
     data[26] = 0xFF;
-
+	
+	// Контрольная сумма
     CRC = calcCRC16(reinterpret_cast<uint16_t*>(data), 15);
     memcpy(data+30, &CRC, 2);
 
@@ -402,21 +436,27 @@ bool sendCalibCoef() {
 bool sendPhtData() {
     uint8_t data[32];
 
+	// Заголовок
     data[0] = 0x2B;
     data[1] = 0xFF;
     data[2] = 0xFF;
+	// Неиспользуемые байты
     for (uint8_t i = 19; i < 26; ++i) { data[i] = 0xFF; }
 
+	// Данные
     memcpy(data+3, phtValues, 16);
 
+	// Время
     uint32_t value = millis();
     memcpy(data+26, &value, 4);
 
+	// Контрольная сумма
     uint16_t CRC = calcCRC16(reinterpret_cast<uint16_t*>(data), 15);
     memcpy(data+30, &CRC, 2);
 
     return nrf24SendData(data);
 }
+// Отправка готовых данных
 bool nrf24SendData(uint8_t *data) {
     nrf24.setPayloadSize(NRF_TX_PACKET_SIZE);
 	nrf24.stopListening();
@@ -429,6 +469,16 @@ bool nrf24SendData(uint8_t *data) {
 }
 
 // Запрос по Serial
+/* Список команд
+K1 - Проверка
+K10 - Начать калибровку фоторезисторов
+K30 - Вывести данные с СЕП
+K31 - Вывести данные с IMU
+K35 - Вывести угол Эйлера
+K36 - Вывести координаты
+K42 - Вывести значения фоторезисторов
+K70 - Вывести калибровачные значение для фоторезисторов
+*/
 void serialRequest() {
 	while(Serial.available()) {
 		if (Serial.read() == 'K') {
@@ -594,7 +644,7 @@ void printMillisTime(uint32_t time) {
 	else { Serial.print(F(" секунд\n")); }
 }
 void serialRequestInvalid() {
-	Serial.print(F("Команда не разпознана...\n"));
+	Serial.print(F("Команда не распознана...\n"));
 }
 void serialRequestIndefined(int32_t request) {
 	Serial.print(F("Команда \"")); Serial.print(request); Serial.print(F("\" недействительна...\n"));
@@ -613,13 +663,13 @@ void nrf24Request() {
 void setup() {
     Serial.begin(115200);
     Wire.begin();
-    // Скорость менять с 115200 не нужно
+    // Скорость менять с 115200 не нужно для модуля второй версии
     gpsSerial.begin(9600);
     // ВАЖНО: РАДИОМОДУЛЬ НЕ БУДЕТ РАБОТАТЬ, БЕЗ SD КАРТЫ!
     // С недочётом сделана платы, проблема физическая
     setupNrf();
 
-    Serial.println(F("BC board is ready...\n"));
+    Serial.print(F("BC board is ready...\n"));
 
     uint32_t gpsUpdateTimeMark = 0;
     uint32_t imuUpdateTimeMark = 0;
@@ -650,29 +700,38 @@ void setup() {
 		    phtUpdateTimeMark = millis() + phtUpdateInterval;
 	    }
 	    if (gpsSendTimeMark < millis() && gpsSendInterval >= MIN_INTERVAL_VALUE) {
-		    sendGpsData();
-		    gpsSendTimeMark = millis() + gpsSendInterval;
+		    if (isTargetPosition()) { // Если мы находимся в нужной позиции
+                sendGpsData();
+                gpsSendTimeMark = millis() + gpsSendInterval;
+		    }
+		    else { gpsSendTimeMark = millis() + gpsSendInterval/10; }
 	    }
 	    if (imuSendTimeMark < millis() && imuSendInterval >= MIN_INTERVAL_VALUE) {
-		    sendImuData();
-		    imuSendTimeMark = millis() + imuSendInterval;
+		    if (isTargetPosition()) { // Если мы находимся в нужной позиции
+                sendImuData();
+                imuSendTimeMark = millis() + imuSendInterval;
+		    }
+		    else { imuSendTimeMark = millis() + imuSendInterval/10; }
 	    }
 	    if (phtSendTimeMark < millis() && phtSendInterval >= MIN_INTERVAL_VALUE) {
-		    sendPhtData();
-		    phtSendTimeMark = millis() + phtSendInterval;
-	    }
-	    if (sdWriteTimeMark < millis() && sdWriteInterval >= MIN_INTERVAL_VALUE) {
-            // Чтобы сразу инициализировать карту, при её подключении
-            if (FLAGS&SD_CARD_INITIALIZATRED) {
-                sdWriteData();
-            }
-		    else if (SD.begin(PIN_CHIP_SELECT)) {
-		        FLAGS |= SD_CARD_INITIALIZATRED;
-                sdWriteData();
-                sdWriteTimeMark = millis() + sdWriteInterval;
+		    if (isTargetPosition()) { // Если мы находимся в нужной позиции
+                sendPhtData();
+                phtSendTimeMark = millis() + phtSendInterval;
 		    }
-            else { sdWriteTimeMark = millis() + sdWriteInterval/2; }
+		    else { phtSendTimeMark = millis() + phtSendInterval/10; }
 	    }
+	    //if (sdWriteTimeMark < millis() && sdWriteInterval >= MIN_INTERVAL_VALUE) {
+            //    // Чтобы сразу инициализировать карту, при её подключении
+            //if (FLAGS&SD_CARD_INITIALIZATRED) {
+            //    sdWriteData();
+            //}
+	    //else if (SD.begin(PIN_CHIP_SELECT)) {
+	    //    FLAGS |= SD_CARD_INITIALIZATRED;
+            //    sdWriteData();
+            //    sdWriteTimeMark = millis() + sdWriteInterval;
+	    //}
+            //else { sdWriteTimeMark = millis() + sdWriteInterval/2; }
+	    //}
 	    if (!(FLAGS&FLG_CALIB_RNG_READED)) {
             readPhtCalibRange();
             FLAGS |= FLG_CALIB_RNG_READED;
