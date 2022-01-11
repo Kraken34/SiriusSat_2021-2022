@@ -1,11 +1,13 @@
-#include <MCP3008.h>
-#include <SPI.h>
-#include <Wire.h>
+#include <GOST4401_81.h>
 #include <TroykaIMU.h>
+#include <MCP3008.h>
+#include <string.h>
+#include <Servo.h>
+#include <Wire.h>
+#include <SPI.h>
+
 #include <EEPROM.h>
 #define EEPROM_PHT_OFFSET 0
-#include <string.h>
-#include <GOST4401_81.h>
 
 #define MCP3008_CLK  5
 #define MCP3008_DOUT 6
@@ -16,16 +18,23 @@
 #define I2C_BUEMU 0x2
 #define I2C_BUSOS 0x3
 
+#define MOTOR_1_PIN     12
+#define MOTOR_2_PIN     10
+#define MOTOR_RESET_PIN 4
+
 MCP3008       mcp3008(MCP3008_CLK, MCP3008_DIN, MCP3008_DOUT, MCP3008_CS);
 Gyroscope     gyroscope;
 Accelerometer accelerometer;
 Compass       compass;
 Barometer     barometer;
+Servo         motor_1;
+Servo         motor_2;
 
 /* Интервалы, специально сделаны переменными, чтобы
 /* менять во время выполнения программы, но пока не реализовано */
 uint16_t IMU_Delay = 1000;
-uint16_t pht_Delay = 1000;
+uint16_t pht_Delay = 50;
+uint16_t pos_Delay = 50;
 
 uint8_t lastRequestI2C = 0;
 
@@ -49,6 +58,119 @@ Vector gyro, acl, mgn;
 Euler rotateAngle;
 uint16_t phtValues[8] = {};
 Range phtCalibRange[8];
+
+void motorReset() {
+    delay(1000);
+    digitalWrite(MOTOR_RESET_PIN, HIGH);
+    delay(2);
+    digitalWrite(MOTOR_RESET_PIN, LOW);
+    delay(100);
+    digitalWrite(MOTOR_RESET_PIN, HIGH);
+    Serial.print("Restart complite\n");
+}
+void motorInit() {
+    motorReset();
+
+    motor_1.writeMicroseconds(2000);
+    motor_2.writeMicroseconds(2000);
+    Serial.print("Speed: 2000\n");
+    delay(3000);
+    motor_1.writeMicroseconds(1000);
+    motor_2.writeMicroseconds (1000);
+    Serial.print("Speed: 1000\n");
+    delay(10000);
+    Serial.print("Motor is ready...\n");
+}
+float getLedValue(int index) {
+    return map(phtValues[index], 0, 1023, phtCalibRange[index].min, phtCalibRange[index].max);
+}
+float getBoardValue(int index) {
+    return getLedValue(index*2) + getLedValue(index*2 + 1);
+}
+int findMax(int p1, int p2, int p3, int p4) {
+    int index = -1;
+    int m = -1;
+    if (p1 >= m) {
+        index = 0;
+        m = p1;
+    }
+    if (p2 >= m) {
+        index = 1;
+        m = p2;
+    }
+    if (p3 >= m) {
+        index = 2;
+        m = p3;
+    }
+    if (p4 >= m) {
+        index = 3;
+        m = p4;
+    }
+    return index;
+}
+#define MIN_INTERVAL 5
+#define MAX_INTERVAL 30
+bool motorLeftEnable = false;
+bool motorRightEnable = false;
+void setPosition() {
+
+    int p1 = getBoardValue(0);
+    int p2 = getBoardValue(1);
+    int p3 = getBoardValue(2);
+    int p4 = getBoardValue(3);
+    int maxIndex = findMax(p1, p2, p3, p4);
+
+    int lIndex = maxIndex - 1;
+    if (lIndex < 0) { lIndex = 3; }
+    int rIndex = maxIndex + 1;
+    if (rIndex > 3) { rIndex = 0; }
+
+    // motor_2 - right
+    bool rightPosition = getBoardValue(rIndex) >= getBoardValue(lIndex);
+    if (rightPosition && motorLeftEnable) { motor_1.writeMicroseconds(1000); }
+    if (!rightPosition && motorRightEnable) { motor_2.writeMicroseconds(1000); }
+
+    Serial.print("\nStart\n");
+    Serial.print("lIndex: "); Serial.println(lIndex);
+    Serial.print("maxIndex: "); Serial.println(maxIndex);
+    Serial.print("rIndex: "); Serial.println(rIndex);
+
+    Serial.print("\nlIndexValue: "); Serial.println(getBoardValue(lIndex));
+    Serial.print("maxIndexValue: "); Serial.println(getBoardValue(maxIndex));
+    Serial.print("rIndexValue: "); Serial.println(getBoardValue(rIndex));
+
+    Serial.print("\nmotorRightEnable: "); Serial.println(motorRightEnable);
+    Serial.print("motorLeftEnable: "); Serial.println(motorLeftEnable);
+
+    if (rightPosition) {
+        if (motorRightEnable) {
+            if (getBoardValue(maxIndex) - getBoardValue(rIndex) < MIN_INTERVAL) {
+                motor_2.writeMicroseconds(1000); // stop
+                motorRightEnable = false;
+            }
+        }
+        else {
+            if (getBoardValue(maxIndex) - getBoardValue(rIndex) > MAX_INTERVAL) {
+                motor_2.writeMicroseconds(1500); // start
+                motorRightEnable = true;
+            }
+        }
+    }
+    else {
+        if (motorLeftEnable) {
+            if (getBoardValue(maxIndex) - getBoardValue(lIndex) < MIN_INTERVAL) {
+                motor_1.writeMicroseconds(1000); // stop
+                motorLeftEnable = false;
+            }
+        }
+        else {
+            if (getBoardValue(maxIndex) - getBoardValue(lIndex) > MAX_INTERVAL) {
+                motor_1.writeMicroseconds(1500); // start
+                motorLeftEnable = true;
+            }
+        }
+    }
+}
 
 void setupIMU() {
     barometer.begin();
@@ -470,8 +592,14 @@ void setup() {
     Wire.onRequest(onRequestI2C);
     Wire.onReceive(onReceiveI2C);
 
+    pinMode(MOTOR_RESET_PIN, OUTPUT);
+    motor_1.attach(MOTOR_1_PIN);
+    motor_2.attach(MOTOR_2_PIN);
+    motorInit();
+
     uint32_t IMUDelay = IMU_Delay + millis();
     uint32_t phtDelay = pht_Delay + millis();
+    uint32_t posDelay = pos_Delay + millis();
 
     while(true) {
 	    if (IMUDelay < millis()) {
@@ -481,6 +609,10 @@ void setup() {
 	    if (phtDelay < millis()) {
 		    updatePhtValues();
 		    phtDelay = millis() + pht_Delay;
+	    }
+	    if (posDelay < millis()) {
+            setPosition();
+            posDelay = millis() + pos_Delay;
 	    }
 	    if (Serial.available()) {
 		    serialRequest();
