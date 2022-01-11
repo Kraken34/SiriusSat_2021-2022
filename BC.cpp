@@ -22,6 +22,8 @@
 #define RX_GPS_PIN 2
 #define TX_GPS_PIN 3
 
+#define SERIAL_SEP ';'
+
 #include <RF24.h>
 #define NRF_TX_ADDRESS     0xAAE10CF1F0UL
 #define NRF_RX_ADDRESS     0xAAE10CF1F1UL
@@ -52,6 +54,7 @@
 uint8_t FLAGS = FLG_BUSOS_UPDATE_IMU;
 
 SoftwareSerial gpsSerial(RX_GPS_PIN, TX_GPS_PIN);
+File           logfile;
 // Недостаточно FLASH памяти, чтобы подключить библиотеку IMU и работать с ней
 //Gyroscope      gyroscope;
 //Accelerometer  accelerometer;
@@ -61,14 +64,14 @@ GPS            gps(gpsSerial);
 RF24           nrf24(9, 10);
 
 struct Vector {
-	float x = 0;
-	float y = 0;
-	float z = 0;
+  float x = 0;
+  float y = 0;
+  float z = 0;
 };
 struct Euler {
-	float x = 0;
-	float y = 0;
-	float z = 0;
+  float x = 0;
+  float y = 0;
+  float z = 0;
 };
 struct Range {
     float min;
@@ -126,7 +129,9 @@ void updatePhtData() {
     memcpy(phtValues, data, 16);
 }
 void updateIMUData() {
-    if (FLAGS&FLG_BUSOS_UPDATE_IMU) {
+  // Недостаточно FLASH памяти, чтобы подключить библиотеку IMU и работать с ней
+  // Поэтому данные обновляются через БУСОС по I2C
+    //if (FLAGS&FLG_BUSOS_UPDATE_IMU) {
         // Если обновление с БУСОС
         Wire.beginTransmission(I2C_BUSOS);
         Wire.write(IC2_CMD_GET_IMU);
@@ -148,9 +153,9 @@ void updateIMUData() {
         mgn.x = readFloatI2C(-16000, 16000, 65535, 2);
         mgn.y = readFloatI2C(-16000, 16000, 65535, 2);
         mgn.z = readFloatI2C(-16000, 16000, 65535, 2);
-    }
-    else {
-		// Недостаточно FLASH памяти, чтобы подключить библиотеку IMU и работать с ней
+    //}
+    //else {
+    // Недостаточно FLASH памяти, чтобы подключить библиотеку IMU и работать с ней
         //accelerometer.readAccelerationAXYZ(acl.x, acl.y, acl.z);
 
         //compass.readMagneticGaussXYZ(mgn.x, mgn.y, mgn.z);
@@ -160,7 +165,7 @@ void updateIMUData() {
 
         //temp = barometer.readTemperatureC();
         //press = barometer.readPressurePascals();
-    }
+    //}
 }
 void updateGPSData() {
   if (gps.available()) {
@@ -171,7 +176,7 @@ void updateGPSData() {
         // Координаты
         gpsLatitude = gps.getLatitudeBase10();
         gpsLongitude = gps.getLongitudeBase10();
-		gpsAltitude = gps.getAltitude();
+    gpsAltitude = gps.getAltitude();
         // Количество видимых спутников
         stlCount = gps.getSat();
         // Скорость
@@ -184,14 +189,51 @@ void updateGPSData() {
         gpsDatetime.month = gps.getMonth();
         gpsDatetime.year = gps.getYear();
         break;
-      case GPS_ERROR_DATA: break;
-      case GPS_ERROR_SAT: break;
+      //case GPS_ERROR_DATA: break;
+      //case GPS_ERROR_SAT: break;
     }
   }
 }
 
 // Запись данных на карту
-void sdWriteData() {}
+void sdWriteData() {
+  logfile = SD.open("log.csv", FILE_WRITE);
+  
+  //dev|stlCount|mVolt|bVolt|sVolt|press|term|azimut|gyX|gyY|gyZ|aX|aY|aZ|mX|mY|mZ|eX|eY|eZ|pAlt|gAlt|gLat|gLon|gSpeed|year|month|day|hour|minute|second
+  logfile.print(stlCount); logfile.print('|');
+  logfile.print(mainVoltage); logfile.print('|');
+  logfile.print(batteryVoltage); logfile.print('|');
+  logfile.print(solarVoltage); logfile.print('|');
+  logfile.print(press); logfile.print('|');
+  logfile.print(temp); logfile.print('|');
+  logfile.print(azimut); logfile.print('|');
+  logfile.print(gyro.x); logfile.print('|');
+  logfile.print(gyro.y); logfile.print('|');
+  logfile.print(gyro.z); logfile.print('|');
+  logfile.print(acl.x); logfile.print('|');
+  logfile.print(acl.y); logfile.print('|');
+  logfile.print(acl.z); logfile.print('|');
+  logfile.print(mgn.x); logfile.print('|');
+  logfile.print(mgn.y); logfile.print('|');
+  logfile.print(mgn.z); logfile.print('|');
+  logfile.print(rotateAngle.x); logfile.print('|');
+  logfile.print(rotateAngle.y); logfile.print('|');
+  logfile.print(rotateAngle.z); logfile.print('|');
+  logfile.print(altitude); logfile.print('|');
+  logfile.print(gpsAltitude); logfile.print('|');
+  logfile.print(gpsLatitude); logfile.print('|');
+  logfile.print(gpsLongitude); logfile.print('|');
+  logfile.print(gpsSpeed); logfile.print('|');
+  logfile.print(gpsDatetime.year); logfile.print('|');
+  logfile.print(gpsDatetime.month); logfile.print('|');
+  logfile.print(gpsDatetime.day); logfile.print('|');
+  logfile.print(gpsDatetime.hour); logfile.print('|');
+  logfile.print(gpsDatetime.minute); logfile.print('|');
+  logfile.print(gpsDatetime.second); logfile.print('|');
+  logfile.print(millis()); logfile.print('\n');
+  
+  logfile.close();
+}
 
 // Проверка позиции
 bool isTargetPosition() {
@@ -208,10 +250,10 @@ bool isTargetPosition() {
 // Настройка модуля радиосвязи
 void setupNrf() {
   if (!nrf24.begin()) {
-	 // ВАЖНО: РАДИОМОДУЛЬ НЕ БУДЕТ РАБОТАТЬ, БЕЗ SD КАРТЫ!
+   // ВАЖНО: РАДИОМОДУЛЬ НЕ БУДЕТ РАБОТАТЬ, БЕЗ SD КАРТЫ!
      // С недочётом сконструированы платы, проблема физическая
      Serial.println(F("Радиомодуль не подключён или отсутствует SD карта!"));
-     while (1) {} // hold in infinite loop
+     while (1) {}
    }
 
   nrf24.setAutoAck(NRF_AUTO_ACK); // режим подтверждения приёма
@@ -222,21 +264,21 @@ void setupNrf() {
   nrf24.openReadingPipe(1, NRF_RX_ADDRESS);
   nrf24.setChannel(0x60);  // выбираем канал
 
-  nrf24.setPALevel (RF24_PA_MIN); //уровень мощности передатчика. На выбор RF24_PA_MIN, RF24_PA_LOW, RF24_PA_HIGH, RF24_PA_MAX
-  nrf24.setDataRate (RF24_250KBPS); //скорость обмена. На выбор RF24_2MBPS, RF24_1MBPS, RF24_250KBPS
+  nrf24.setPALevel(RF24_PA_MIN); //уровень мощности передатчика. На выбор RF24_PA_MIN, RF24_PA_LOW, RF24_PA_HIGH, RF24_PA_MAX
+  nrf24.setDataRate(RF24_250KBPS); //скорость обмена. На выбор RF24_2MBPS, RF24_1MBPS, RF24_250KBPS
 
   nrf24.setPayloadSize(NRF_RX_PACKET_SIZE);
   nrf24.powerUp();
   nrf24.startListening();
 }
 void setupIMU() {
-	// Недостаточно FLASH памяти, чтобы подключить библиотеку IMU и работать с ней
+  // Недостаточно FLASH памяти, чтобы подключить библиотеку IMU и работать с ней
     //barometer.begin();
     //compass.begin();
     //gyroscope.begin();
     //accelerometer.begin();
 
-	// Установка диапазона измерения
+  // Установка диапазона измерения
     //compass.setRange(CompassRange::RANGE_8GAUSS);
     //gyroscope.setRange(GyroscopeRange::RANGE_250DPS);
     //accelerometer.setRange(AccelerometerRange::RANGE_8G);
@@ -302,12 +344,12 @@ bool sendImuData() {
     uint8_t data[32];
     uint32_t value;
 
-	// Заголовок
+  // Заголовок
     data[0] = 0x1F;
     data[1] = 0xFF;
     data[2] = 0xFF;
 
-	// Сжатие данных
+  // Сжатие данных
     value = floatToUint32(press, 26000, 126000, 16777215);
     memcpy(data+3+0, &value, 3);
 
@@ -338,7 +380,7 @@ bool sendImuData() {
     value = millis();
     memcpy(data+3+23, &value, 4);
 
-	// Контрольная сумма
+  // Контрольная сумма
     uint16_t CRC = calcCRC16(reinterpret_cast<uint16_t*>(data), 15);
     memcpy(data+30, &CRC, 2);
 
@@ -348,14 +390,14 @@ bool sendGpsData() {
     uint8_t data[32];
     uint32_t value;
 
-	// Заголовок
+  // Заголовок
     data[0] = 0x24;
     data[1] = 0xFF;
     data[2] = 0xFF;
-	// Неиспользуемые байты
+  // Неиспользуемые байты
     data[25] = 0xFF;
 
-	// Сжатие данных
+  // Сжатие данных
     memcpy(data+3+0, &gpsLatitude, 4);
     memcpy(data+3+4, &gpsLongitude, 4);
     memcpy(data+3+8, &gpsAltitude, 4);
@@ -368,7 +410,7 @@ bool sendGpsData() {
     value = millis();
     memcpy(data+3+23, &value, 4);
 
-	// Контрольная сумма
+  // Контрольная сумма
     uint16_t CRC = calcCRC16(reinterpret_cast<uint16_t*>(data), 15);
     memcpy(data+30, &CRC, 2);
 
@@ -377,15 +419,15 @@ bool sendGpsData() {
 bool sendCalibCoef() {
     uint8_t data[32];
 
-	// Заголовок
+  // Заголовок
     data[0] = 0x46;
     data[1] = 0xFF;
     data[2] = 0x01;
-	// Неиспользуемые байты
+  // Неиспользуемые байты
     data[27] = 0xFF;
     data[28] = 0xFF;
     data[29] = 0xFF;
-	// Данные
+  // Данные
     memcpy(data+3, &phtCalibRange[0].min, 4);
     memcpy(data+7, &phtCalibRange[0].max, 4);
     memcpy(data+11, &phtCalibRange[1].min, 4);
@@ -393,7 +435,7 @@ bool sendCalibCoef() {
     memcpy(data+19, &phtCalibRange[2].min, 4);
     memcpy(data+23, &phtCalibRange[2].max, 4);
 
-	// Контрольная сумма
+  // Контрольная сумма
     uint16_t CRC = calcCRC16(reinterpret_cast<uint16_t*>(data), 15);
     memcpy(data+30, &CRC, 2);
     nrf24SendData(data);
@@ -406,7 +448,7 @@ bool sendCalibCoef() {
     memcpy(data+19, &phtCalibRange[5].min, 4);
     memcpy(data+23, &phtCalibRange[5].max, 4);
 
-	// Контрольная сумма
+  // Контрольная сумма
     CRC = calcCRC16(reinterpret_cast<uint16_t*>(data), 15);
     memcpy(data+30, &CRC, 2);
     nrf24SendData(data);
@@ -417,7 +459,7 @@ bool sendCalibCoef() {
     memcpy(data+7, &phtCalibRange[6].max, 4);
     memcpy(data+11, &phtCalibRange[7].min, 4);
     memcpy(data+15, &phtCalibRange[7].max, 4);
-	// Неиспользуемые байты
+  // Неиспользуемые байты
     data[19] = 0xFF;
     data[20] = 0xFF;
     data[21] = 0xFF;
@@ -426,8 +468,8 @@ bool sendCalibCoef() {
     data[24] = 0xFF;
     data[25] = 0xFF;
     data[26] = 0xFF;
-	
-	// Контрольная сумма
+  
+  // Контрольная сумма
     CRC = calcCRC16(reinterpret_cast<uint16_t*>(data), 15);
     memcpy(data+30, &CRC, 2);
 
@@ -436,21 +478,21 @@ bool sendCalibCoef() {
 bool sendPhtData() {
     uint8_t data[32];
 
-	// Заголовок
+  // Заголовок
     data[0] = 0x2B;
     data[1] = 0xFF;
     data[2] = 0xFF;
-	// Неиспользуемые байты
+  // Неиспользуемые байты
     for (uint8_t i = 19; i < 26; ++i) { data[i] = 0xFF; }
 
-	// Данные
+  // Данные
     memcpy(data+3, phtValues, 16);
 
-	// Время
+  // Время
     uint32_t value = millis();
     memcpy(data+26, &value, 4);
 
-	// Контрольная сумма
+  // Контрольная сумма
     uint16_t CRC = calcCRC16(reinterpret_cast<uint16_t*>(data), 15);
     memcpy(data+30, &CRC, 2);
 
@@ -459,195 +501,244 @@ bool sendPhtData() {
 // Отправка готовых данных
 bool nrf24SendData(uint8_t *data) {
     nrf24.setPayloadSize(NRF_TX_PACKET_SIZE);
-	nrf24.stopListening();
-	uint8_t ans = nrf24.write(data, NRF_TX_PACKET_SIZE);
+  nrf24.stopListening();
+  uint8_t ans = nrf24.write(data, NRF_TX_PACKET_SIZE);
 
-	nrf24.setPayloadSize(NRF_RX_PACKET_SIZE);
-	nrf24.startListening();
+  nrf24.setPayloadSize(NRF_RX_PACKET_SIZE);
+  nrf24.startListening();
 
-	return ans;
+  return ans;
 }
 
 // Запрос по Serial
 /* Список команд
-K1 - Проверка
 K10 - Начать калибровку фоторезисторов
 K30 - Вывести данные с СЕП
 K31 - Вывести данные с IMU
-K35 - Вывести угол Эйлера
 K36 - Вывести координаты
 K42 - Вывести значения фоторезисторов
 K70 - Вывести калибровачные значение для фоторезисторов
 */
 void serialRequest() {
-	while(Serial.available()) {
-		if (Serial.read() == 'K') {
-			int32_t request = Serial.parseInt(SKIP_NONE);
-			if (!request) { serialRequestInvalid(); continue; }
+  while(Serial.available()) {
+    if (Serial.read() == 'K') {
+      int32_t request = Serial.parseInt(SKIP_NONE);
+      if (!request) { Serial.println("Unknown command"); continue; }
 
-			Serial.print('K');
-			Serial.print(request);
-			Serial.print('\n');
+      Serial.print('K');
+      Serial.print(request);
+      Serial.print('\n');
 
-			switch (request) {
-				case 1:  serialRequest_1();  break;
-				case 30: serialRequest_30(); break;
-				case 31: serialRequest_31(); break;
-				case 35: serialRequest_35(); break;
-				case 36: serialRequest_36(); break;
-				case 42: serialRequest_42(); break;
-				case 43: serialRequest_43(); break;
-				case 70: serialRequest_70(); break;
-				default: serialRequestIndefined(request);
-			}
+      switch (request) {
+        case 30: serialRequest_30(); break;
+        case 31: serialRequest_31(); break;
+        case 36: serialRequest_36(); break;
+        case 42: serialRequest_42(); break;
+        case 43: serialRequest_43(); break;
+        case 70: serialRequest_70(); break;
+        default: serialRequestIndefined(request);
+      }
 
-			while(Serial.available() && Serial.read() != '\n') {}
-		}
-		else { serialRequestInvalid(); }
-	}
-}
-void serialRequest_1() {
-	Serial.print(F("OK\n"));
-	while(Serial.available() && Serial.read() != '\n') {}
-
-	uint8_t data[32];
-	data[0] = 0x01;
-
-	uint16_t CRC = calcCRC16(reinterpret_cast<uint16_t*>(data), 15);
-    memcpy(data+30, &CRC, 2);
-
-    nrf24SendData(data);
+      while(Serial.available() && Serial.read() != '\n') {}
+    }
+    else { Serial.println("Unknown command"); }
+  }
 }
 void serialRequest_30() {
-	Serial.print(F("Напряжение: "));
-	Serial.print(mainVoltage);
-	Serial.print(F(" %\nНапряжение батареи: "));
-	Serial.print(batteryVoltage);
-	Serial.print(F(" %\nНапряжение солнечных понелей: "));
-	Serial.print(solarVoltage);
-	Serial.print(F(" %\nOK\n"));
+  // Экономия FLASH памяти:
+  //Serial.print(F("Напряжение: "));
+  //Serial.print(mainVoltage);
+  //Serial.print(F(" %\nНапряжение батареи: "));
+  //Serial.print(batteryVoltage);
+  //Serial.print(F(" %\nНапряжение солнечных понелей: "));
+  //Serial.print(solarVoltage);
+  //Serial.print(F(" %\nOK\n"));
+  
+  Serial.print(mainVoltage);
+  Serial.print(SERIAL_SEP);
+  Serial.print(batteryVoltage);
+  Serial.print(SERIAL_SEP);
+  Serial.println(solarVoltage);
 }
 void serialRequest_31() {
-	Serial.print(F("Давление: "));
-    Serial.print(press);
-    Serial.print(F(" Па\nТемпература: "));
+  // Экономия FLASH памяти:
+  //Serial.print(F("Давление: "));
+    //Serial.print(press);
+    //Serial.print(F(" Па\nТемпература: "));
+    //Serial.print(temp);
+    //Serial.print(F(" °C\nВектор ускорения (X) (Y) (Z): "));
+    //Serial.print(acl.x); Serial.print(' '); Serial.print(acl.y); Serial.print(' '); Serial.print(acl.z);
+    //Serial.print(F(" м\\с²\nВектор магнитного поля (X) (Y) (Z): "));
+    //Serial.print(mgn.x); Serial.print(' '); Serial.print(mgn.y); Serial.print(' '); Serial.print(mgn.z);
+    //Serial.print(F(" мГаус\nВектор угловой скорости (X) (Y) (Z): "));
+    //Serial.print(gyro.x); Serial.print(' '); Serial.print(gyro.y); Serial.print(' '); Serial.print(gyro.z);
+    //Serial.print(F(" °\\с\n"));
+    //printMillisTime(millis());
+    //Serial.print(F("OK\n"));
+  //Serial.print(press);
+    Serial.print(SERIAL_SEP);
     Serial.print(temp);
-    Serial.print(F(" °C\nВектор ускорения (X) (Y) (Z): "));
-    Serial.print(acl.x); Serial.print(' '); Serial.print(acl.y); Serial.print(' '); Serial.print(acl.z);
-    Serial.print(F(" м\\с²\nВектор магнитного поля (X) (Y) (Z): "));
-    Serial.print(mgn.x); Serial.print(' '); Serial.print(mgn.y); Serial.print(' '); Serial.print(mgn.z);
-    Serial.print(F(" мГаус\nВектор угловой скорости (X) (Y) (Z): "));
-    Serial.print(gyro.x); Serial.print(' '); Serial.print(gyro.y); Serial.print(' '); Serial.print(gyro.z);
-    Serial.print(F(" °\\с\n"));
-    printMillisTime(millis());
-    Serial.print(F("OK\n"));
+    Serial.print(SERIAL_SEP);
+    Serial.print(acl.x);
+    Serial.print(SERIAL_SEP);
+    Serial.print(acl.y);
+    Serial.print(SERIAL_SEP);
+    Serial.print(acl.z);
+    Serial.print(SERIAL_SEP);
+    Serial.print(mgn.x);
+    Serial.print(SERIAL_SEP);
+    Serial.print(mgn.y);
+    Serial.print(SERIAL_SEP);
+    Serial.print(mgn.z);
+    Serial.print(SERIAL_SEP);
+    Serial.print(gyro.x);
+    Serial.print(SERIAL_SEP);
+    Serial.print(gyro.y);
+    Serial.print(SERIAL_SEP);
+    Serial.print(gyro.z);
+    Serial.print(SERIAL_SEP);
+    Serial.print(millis());
+    Serial.print('\n');
 }
-void serialRequest_35() {
-	Serial.print(F("Угол Эйлера (X) (Y) (Z): "));
-	Serial.print(rotateAngle.x); Serial.print(' '); Serial.print(rotateAngle.y); Serial.print(' '); Serial.print(rotateAngle.z);
-	Serial.print(F(" °\nOK\n"));
-}
+
 void serialRequest_36() {
-	Serial.print(F("Широта: "));
-    Serial.print(gpsLatitude);
-    Serial.print(F(" °\nДолгота: "));
+  // Экономия FLASH памяти:
+  //Serial.print(F("Широта: "));
+    //Serial.print(gpsLatitude);
+    //Serial.print(F(" °\nДолгота: "));
+    //Serial.print(gpsLongitude);
+    //Serial.print(F(" °\nВысота: "));
+    //Serial.print(gpsAltitude);
+    //Serial.print(F(" м\nСкорость: "));
+    //Serial.print(gpsSpeed);
+    //Serial.print(F(" м\\с\nВремя (чч:мм с): "));
+
+    //if (gpsDatetime.hour < 10) { Serial.print('0'); }
+    //Serial.print(gpsDatetime.hour);
+    //Serial.print(':');
+
+    //if (gpsDatetime.minute < 10) { Serial.print('0'); }
+    //Serial.print(gpsDatetime.minute);
+    //Serial.print(' ');
+    //Serial.print(gpsDatetime.second);
+
+    //Serial.print(F("\nДата: "));
+
+    //if (gpsDatetime.day < 10) { Serial.print('0'); }
+    //Serial.print(gpsDatetime.day);
+    //Serial.print('.');
+
+    //if (gpsDatetime.month < 10) { Serial.print('0'); }
+    //Serial.print(gpsDatetime.month);
+    //Serial.print('.');
+
+    //Serial.println(gpsDatetime.year + 2000);
+    //printMillisTime(millis());
+    //Serial.print(F("OK\n"));
+  
+  Serial.print(gpsLatitude);
+    Serial.print(SERIAL_SEP);
     Serial.print(gpsLongitude);
-    Serial.print(F(" °\nВысота: "));
+    Serial.print(SERIAL_SEP);
     Serial.print(gpsAltitude);
-    Serial.print(F(" м\nСкорость: "));
+    Serial.print(SERIAL_SEP);
     Serial.print(gpsSpeed);
-    Serial.print(F(" м\\с\nВремя (чч:мм с): "));
-
-    if (gpsDatetime.hour < 10) { Serial.print('0'); }
+    Serial.print(SERIAL_SEP);
     Serial.print(gpsDatetime.hour);
-    Serial.print(':');
-
-    if (gpsDatetime.minute < 10) { Serial.print('0'); }
+    Serial.print(SERIAL_SEP);
     Serial.print(gpsDatetime.minute);
-    Serial.print(' ');
+    Serial.print(SERIAL_SEP);
     Serial.print(gpsDatetime.second);
-
-    Serial.print(F("\nДата: "));
-
-    if (gpsDatetime.day < 10) { Serial.print('0'); }
+    Serial.print(SERIAL_SEP);
     Serial.print(gpsDatetime.day);
-    Serial.print('.');
-
-    if (gpsDatetime.month < 10) { Serial.print('0'); }
+    Serial.print(SERIAL_SEP);
     Serial.print(gpsDatetime.month);
-    Serial.print('.');
-
-    Serial.println(gpsDatetime.year + 2000);
-    printMillisTime(millis());
-    Serial.print(F("OK\n"));
+    Serial.print(SERIAL_SEP);
+    Serial.print(gpsDatetime.year);
+    Serial.print(SERIAL_SEP);
+    Serial.println(millis());
 }
 void serialRequest_42() {
-    for (uint8_t i = 0; i < 8; ++i) {
-        Serial.print(F("Значение фоторезистора ("));
-        Serial.print(i + 1);
-        Serial.print(F("): "));
-        Serial.println(map(phtValues[i], 0, 1023, phtCalibRange[i].min, phtCalibRange[i].max));
+  // Экономия FLASH памяти:
+    for (uint8_t i = 0; i < 7; ++i) {
+        //Serial.print(F("Значение фоторезистора ("));
+        //Serial.print(i + 1);
+        //Serial.print(F("): "));
+    Serial.print(map(phtValues[i], 0, 1023, phtCalibRange[i].min, phtCalibRange[i].max));
+    Serial.print(SERIAL_SEP);
+        //Serial.println(map(phtValues[i], 0, 1023, phtCalibRange[i].min, phtCalibRange[i].max));
     }
-	Serial.print(F("OK\n"));
+  //Serial.print(F("OK\n"));
+  Serial.println(map(phtValues[7], 0, 1023, phtCalibRange[7].min, phtCalibRange[7].max));
 }
 void serialRequest_43() {
-    for (uint8_t i = 0; i < 8; ++i) {
-        Serial.print(F("Значение АЦП фоторезистора ("));
-        Serial.print(i + 1);
-        Serial.print(F("): "));
-        Serial.println(phtValues[i]);
+  // Экономия FLASH памяти:
+    for (uint8_t i = 0; i < 7; ++i) {
+        //Serial.print(F("Значение АЦП фоторезистора ("));
+        //Serial.print(i + 1);
+        //Serial.print(F("): "));
+    Serial.print(phtValues[i]);
+    Serial.print(SERIAL_SEP);
     }
-	Serial.print(F("OK\n"));
+  Serial.println(phtValues[7]);
+  //Serial.print(F("OK\n"));
 }
 void serialRequest_70() {
-    for (uint8_t i = 0; i < 8; ++i) {
-        Serial.print(F("Диапазон измерений фоторезистора ("));
-        Serial.print(i + 1);
-        Serial.print(F("): "));
-        Serial.println(phtCalibRange[i].min);
-        Serial.print(' ');
-        Serial.println(phtCalibRange[i].max);
+  // Экономия FLASH памяти:
+  Serial.print(phtCalibRange[0].min);
+  Serial.print(SERIAL_SEP);
+  Serial.print(phtCalibRange[0].max);
+    for (uint8_t i = 1; i < 8; ++i) {
+    //    Serial.print(F("Диапазон измерений фоторезистора ("));
+    //    Serial.print(i + 1);
+    //    Serial.print(F("): "));
+    //    Serial.println(phtCalibRange[i].min);
+    Serial.print(SERIAL_SEP);
+    Serial.print(phtCalibRange[i].min);
+    //    Serial.print(' ');
+    //    Serial.println(phtCalibRange[i].max);
+    Serial.print(SERIAL_SEP);
+    Serial.print(phtCalibRange[i].max);
     }
-	Serial.print(F("OK\n"));
+  //Serial.print(F("OK\n"));
+  
 }
 void printMillisTime(uint32_t time) {
-	Serial.print(F("Время с момента старта МК: "));
+  // Экономия FLASH памяти:
+  //Serial.print(F("Время с момента старта МК: "));
+  //uint8_t day = time/1000/60/60/24;
+  //if (day) {
+  //  Serial.print(day);
+  //  if (day % 10 == 1) { Serial.print(F(" день ")); }
+  //  else if (2 <= day % 10 && day % 10 <= 4) { Serial.print(F(" дня ")); }
+  //  else { Serial.print(F(" дней ")); }
+  //}
 
-	uint8_t day = time/1000/60/60/24;
-	if (day) {
-		Serial.print(day);
-		if (day % 10 == 1) { Serial.print(F(" день ")); }
-		else if (2 <= day % 10 && day % 10 <= 4) { Serial.print(F(" дня ")); }
-		else { Serial.print(F(" дней ")); }
-	}
+  //uint8_t hour = (time/1000/60/60) % 24;
+  //if (hour) {
+  //  Serial.print(hour);
+  //  if (hour % 10 == 1) { Serial.print(F(" час ")); }
+  //  else if (2 <= hour % 10 && hour % 10 <= 4) { Serial.print(F(" часа ")); }
+  //  else { Serial.print(F(" часов ")); }
+  //}
 
-	uint8_t hour = (time/1000/60/60) % 24;
-	if (hour) {
-		Serial.print(hour);
-		if (hour % 10 == 1) { Serial.print(F(" час ")); }
-		else if (2 <= hour % 10 && hour % 10 <= 4) { Serial.print(F(" часа ")); }
-		else { Serial.print(F(" часов ")); }
-	}
+  //uint8_t minute = (time/1000/60) % 60;
+  //if (minute) {
+  //  Serial.print(minute);
+  //  if (minute % 10 == 1) { Serial.print(F(" минута ")); }
+  //  else if (2 <= minute % 10 && minute % 10 <= 4) { Serial.print(F(" минуты ")); }
+  //  else { Serial.print(F(" минут ")); }
+  //}
 
-	uint8_t minute = (time/1000/60) % 60;
-	if (minute) {
-		Serial.print(minute);
-		if (minute % 10 == 1) { Serial.print(F(" минута ")); }
-		else if (2 <= minute % 10 && minute % 10 <= 4) { Serial.print(F(" минуты ")); }
-		else { Serial.print(F(" минут ")); }
-	}
-
-	uint8_t second = (time/1000) % 60;
-	Serial.print(second);
-	if (second % 10 == 1) { Serial.print(F(" секунда\n")); }
-	else if (2 <= second % 10 && second % 10 <= 4) { Serial.print(F(" секунды\n")); }
-	else { Serial.print(F(" секунд\n")); }
-}
-void serialRequestInvalid() {
-	Serial.print(F("Команда не распознана...\n"));
+  //uint8_t second = (time/1000) % 60;
+  //Serial.print(second);
+  //if (second % 10 == 1) { Serial.print(F(" секунда\n")); }
+  //else if (2 <= second % 10 && second % 10 <= 4) { Serial.print(F(" секунды\n")); }
+  //else { Serial.print(F(" секунд\n")); }
+  Serial.println(time);
 }
 void serialRequestIndefined(int32_t request) {
-	Serial.print(F("Команда \"")); Serial.print(request); Serial.print(F("\" недействительна...\n"));
+  Serial.print(F("Coomand \"")); Serial.print(request); Serial.print(F("\" invalid...\n"));
 }
 
 // Запрос с земли
@@ -655,7 +746,7 @@ void nrf24Request() {
     uint8_t data[NRF_RX_PACKET_SIZE];
     nrf24.read(data, NRF_RX_PACKET_SIZE);
     switch(data[0]) {
-    case 1: Serial.print("nRF24L01 is receive data!\n"); break;
+    case 1: Serial.println("New data!"); break;
     case 70: sendCalibCoef(); break;
     };
 }
@@ -683,65 +774,66 @@ void setup() {
     uint32_t sdWriteTimeMark = 0;
 
     while(true) {
-	    if (gpsUpdateTimeMark < millis() && gpsUpdateInterval >= MIN_INTERVAL_VALUE) {
-		    updateGPSData();
-		    gpsUpdateTimeMark = millis() + gpsUpdateInterval;
-	    }
-	    if (imuUpdateTimeMark < millis() && imuUpdateInterval >= MIN_INTERVAL_VALUE) {
-		    updateIMUData();
-		    imuUpdateTimeMark = millis() + imuUpdateInterval;
-	    }
-	    if (akbUpdateTimeMark < millis() && akbUpdateInterval >= MIN_INTERVAL_VALUE) {
-		    updateAkbData();
-		    akbUpdateTimeMark = millis() + akbUpdateInterval;
-	    }
-	    if (phtUpdateTimeMark < millis() && phtUpdateInterval >= MIN_INTERVAL_VALUE) {
-		    updatePhtData();
-		    phtUpdateTimeMark = millis() + phtUpdateInterval;
-	    }
-	    if (gpsSendTimeMark < millis() && gpsSendInterval >= MIN_INTERVAL_VALUE) {
-		    if (isTargetPosition()) { // Если мы находимся в нужной позиции
+      if (gpsUpdateTimeMark < millis() && gpsUpdateInterval >= MIN_INTERVAL_VALUE) {
+        updateGPSData();
+        gpsUpdateTimeMark = millis() + gpsUpdateInterval;
+      }
+      if (imuUpdateTimeMark < millis() && imuUpdateInterval >= MIN_INTERVAL_VALUE) {
+        updateIMUData();
+        imuUpdateTimeMark = millis() + imuUpdateInterval;
+      }
+      if (akbUpdateTimeMark < millis() && akbUpdateInterval >= MIN_INTERVAL_VALUE) {
+        updateAkbData();
+        akbUpdateTimeMark = millis() + akbUpdateInterval;
+      }
+      if (phtUpdateTimeMark < millis() && phtUpdateInterval >= MIN_INTERVAL_VALUE) {
+        updatePhtData();
+        phtUpdateTimeMark = millis() + phtUpdateInterval;
+      }
+      if (gpsSendTimeMark < millis() && gpsSendInterval >= MIN_INTERVAL_VALUE) {
+        if (isTargetPosition()) { // Если мы находимся в нужной позиции
                 sendGpsData();
                 gpsSendTimeMark = millis() + gpsSendInterval;
-		    }
-		    else { gpsSendTimeMark = millis() + gpsSendInterval/10; }
-	    }
-	    if (imuSendTimeMark < millis() && imuSendInterval >= MIN_INTERVAL_VALUE) {
-		    if (isTargetPosition()) { // Если мы находимся в нужной позиции
+        }
+        else { gpsSendTimeMark = millis() + gpsSendInterval/10; }
+      }
+      if (imuSendTimeMark < millis() && imuSendInterval >= MIN_INTERVAL_VALUE) {
+        if (isTargetPosition()) { // Если мы находимся в нужной позиции
                 sendImuData();
                 imuSendTimeMark = millis() + imuSendInterval;
-		    }
-		    else { imuSendTimeMark = millis() + imuSendInterval/10; }
-	    }
-	    if (phtSendTimeMark < millis() && phtSendInterval >= MIN_INTERVAL_VALUE) {
-		    if (isTargetPosition()) { // Если мы находимся в нужной позиции
+        }
+        else { imuSendTimeMark = millis() + imuSendInterval/10; }
+      }
+      if (phtSendTimeMark < millis() && phtSendInterval >= MIN_INTERVAL_VALUE) {
+        if (isTargetPosition()) { // Если мы находимся в нужной позиции
                 sendPhtData();
                 phtSendTimeMark = millis() + phtSendInterval;
-		    }
-		    else { phtSendTimeMark = millis() + phtSendInterval/10; }
-	    }
-	    //if (sdWriteTimeMark < millis() && sdWriteInterval >= MIN_INTERVAL_VALUE) {
-            //    // Чтобы сразу инициализировать карту, при её подключении
-            //if (FLAGS&SD_CARD_INITIALIZATRED) {
-            //    sdWriteData();
-            //}
-	    //else if (SD.begin(PIN_CHIP_SELECT)) {
-	    //    FLAGS |= SD_CARD_INITIALIZATRED;
-            //    sdWriteData();
-            //    sdWriteTimeMark = millis() + sdWriteInterval;
-	    //}
-            //else { sdWriteTimeMark = millis() + sdWriteInterval/2; }
-	    //}
-	    if (!(FLAGS&FLG_CALIB_RNG_READED)) {
+        }
+        else { phtSendTimeMark = millis() + phtSendInterval/10; }
+      }
+      if (sdWriteTimeMark < millis() && sdWriteInterval >= MIN_INTERVAL_VALUE) {
+            // Чтобы сразу инициализировать карту, при её подключении
+            if (FLAGS&SD_CARD_INITIALIZATRED) {
+                sdWriteData();
+        sdWriteTimeMark = millis() + sdWriteInterval;
+            }
+        else if (SD.begin(PIN_CHIP_SELECT)) {
+            FLAGS |= SD_CARD_INITIALIZATRED;
+                sdWriteData();
+                sdWriteTimeMark = millis() + sdWriteInterval;
+        }
+            else { sdWriteTimeMark = millis() + sdWriteInterval/2; }
+      }
+      if (!(FLAGS&FLG_CALIB_RNG_READED)) {
             readPhtCalibRange();
             FLAGS |= FLG_CALIB_RNG_READED;
-	    }
-	    if (Serial.available()) {
-		    serialRequest();
-	    }
-	    if (nrf24.available()) {
+      }
+      if (Serial.available()) {
+        serialRequest();
+      }
+      if (nrf24.available()) {
             nrf24Request();
-	    }
+      }
   }
 }
 
