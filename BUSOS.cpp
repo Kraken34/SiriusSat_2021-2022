@@ -38,9 +38,9 @@ Servo         motorLeft;
 Servo         motorRight;
 
 // Интервалы
-#define imuTimeInterval 1000;
-#define phtTimeInterval 50;
-#define posTimeInterval 50;
+#define imuTimeInterval 1000
+#define phtTimeInterval 50
+#define posTimeInterval 50
 
 struct Vector {
 	float x = 0;
