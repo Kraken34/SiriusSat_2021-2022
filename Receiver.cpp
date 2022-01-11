@@ -5,14 +5,15 @@
 #include <RF24_config.h>
 #include <RF24.h>
 
-#define NRF_RX_PSIZE 8
-#define NRF_TX_PSIZE 8
+#define NRF_RX_PSIZE      8
+#define NRF_TX_PSIZE      8
 #define NRF_RETRIES_DELAY 0
 #define NRF_RETRIES_COUNT 3
-#define NRF_AUTO_ACK 1
-
-#define RX_PACKET_SIZE 32
-#define TX_PACKET_SIZE 20
+#define NRF_AUTO_ACK      1
+#define RX_PACKET_SIZE    32
+#define TX_PACKET_SIZE    20
+#define NRF_ADDRESS_TX    0xAAE10CF1F1
+#define NRF_ADDRESS_RX    0xAAE10CF1F0
 
 /* Интервалы, специально сделаны переменными, чтобы
 /* менять во время выполнения программы, но пока не реализовано */
@@ -27,7 +28,7 @@ uint16_t calibCoefRequestInterval = 1000;
 #define FLG_PHT_READED_P_1    0x04
 #define FLG_PHT_READED_P_2    0x08
 #define FLG_PHT_READED_P_3    0x10
-uint8_t FLAGS = 0;
+uint8_t FLAGS = FLG_HUMAN_UI|FLG_PRINT_DATA_ALWAYS;
 
 
 struct Vector {
@@ -56,8 +57,6 @@ struct Datetime {
 
 RF24 nrf24(10, 9);
 
-uint64_t addressTX = 0xAAE10CF1F1;
-uint64_t addressRX = 0xAAE10CF1F0;
 uint8_t stlCount = 0, btr_1 = 0, btr_2 = 0;
 Datetime gpsDatetime;
 float gpsLatitude = 0,  gpsLongitude = 0, gpsAltitude = 0, azimut = 0, altitude = 0;
@@ -78,8 +77,8 @@ void setupNrf() {
   nrf24.enableAckPayload();    //разрешить отсылку данных в ответ на входящий сигнал
   nrf24.setRetries(NRF_RETRIES_DELAY, NRF_RETRIES_COUNT);    //(время между попыткой достучаться, число попыток)
 
-  nrf24.openWritingPipe(addressTX);   //мы - труба 0, открываем канал для передачи данных
-  nrf24.openReadingPipe(1, addressRX);
+  nrf24.openWritingPipe(NRF_ADDRESS_TX);   //мы - труба 0, открываем канал для передачи данных
+  nrf24.openReadingPipe(1, NRF_ADDRESS_RX);
   nrf24.setChannel(0x60);  //выбираем канал (в котором нет шумов!)
 
   nrf24.setPALevel (RF24_PA_MIN); //уровень мощности передатчика. На выбор RF24_PA_MIN, RF24_PA_LOW, RF24_PA_HIGH, RF24_PA_MAX
