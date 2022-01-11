@@ -7,7 +7,7 @@
 #include <SPI.h>
 
 #include <EEPROM.h>
-#define EEPROM_PHT_OFFSET 0
+#define EEPROM_PHT_ADDRESS 0
 
 #define MCP3008_CLK  5
 #define MCP3008_DOUT 6
@@ -21,7 +21,9 @@
 #define MOTOR_1_PIN         12
 #define MOTOR_2_PIN         10
 #define MOTOR_RESET_PIN     4
+// Пока разница больше MIN_LIGHT_DIFFERENS продолжается поворот
 #define MIN_LIGHT_DIFFERENS 5
+// Пока разница меньше MIN_LIGHT_DIFFERENS поворот не происходит
 #define MAX_LIGHT_DIFFERENS 30
 #define PWM_MIN             1000
 #define PWM_CENTER          1500
@@ -35,11 +37,10 @@ Barometer     barometer;
 Servo         motorLeft;
 Servo         motorRight;
 
+// Интервалы
 #define imuTimeInterval 1000;
 #define phtTimeInterval 50;
 #define posTimeInterval 50;
-
-uint8_t lastRequestI2C = 0;
 
 struct Vector {
 	float x = 0;
@@ -57,10 +58,19 @@ struct Range {
 };
 
 float press = 0, temp = 0, altitude = 0, azimut = 0;
+
+// Состояние моторов
 bool motorLeftEnable = false;
 bool motorRightEnable = false;
+
+// Номер последнего запроса, полученного по I2C
+uint8_t lastRequestI2C = 0;
+
+// Значения с АЦП
 uint16_t phtValues[8] = {};
+// Диапазон измерений каждого фоторезистора
 Range phtCalibRange[8];
+
 Vector gyro, acl, mgn;
 Euler rotateAngle;
 
@@ -86,11 +96,13 @@ void motorInit() {
     delay(10000);
     Serial.print("Motor is ready...\n");
 }
-float getLedValue(int index) {
+// Получить значения освещённости с конкретного фоторезистора
+float getPhtValue(int index) {
     return map(phtValues[index], 0, 1023, phtCalibRange[index].min, phtCalibRange[index].max);
 }
+// Получить среднее значения освещённости на панели
 float getBoardValue(int index) {
-    return getLedValue(index*2) + getLedValue(index*2 + 1);
+    return (getPhtValue(index*2) + getPhtValue(index*2 + 1))/2;
 }
 int findMax(int p1, int p2, int p3, int p4) {
     int index = 0;
@@ -110,57 +122,71 @@ int findMax(int p1, int p2, int p3, int p4) {
     return index;
 }
 void startPositioning() {
+	// Поиск максимума
     int boardValue_1 = getBoardValue(0);
     int boardValue_2 = getBoardValue(1);
     int boardValue_3 = getBoardValue(2);
     int boardValue_4 = getBoardValue(3);
     int maxIndex = findMax(boardValue_1, boardValue_2, boardValue_3, boardValue_4);
 
+	// Крайние случаи
     int lIndex = maxIndex - 1;
     if (lIndex < 0) { lIndex = 3; }
     int rIndex = maxIndex + 1;
     if (rIndex > 3) { rIndex = 0; }
 
+	// Определение стороны, в которую нужно двигаться
     bool rightPosition = getBoardValue(rIndex) >= getBoardValue(lIndex);
+
+	// Если в данный момент, спутник движется не в ту сторону (резко изменилась цель)
     if (rightPosition && motorLeftEnable) { motorLeft.writeMicroseconds(PWM_MIN); }
     if (!rightPosition && motorRightEnable) { motorRight.writeMicroseconds(PWM_MIN); }
 
-    Serial.print("\nStart\n");
-    Serial.print("lIndex: "); Serial.println(lIndex);
-    Serial.print("maxIndex: "); Serial.println(maxIndex);
-    Serial.print("rIndex: "); Serial.println(rIndex);
+    //Serial.print("\nStart\n");
+    //Serial.print("lIndex: "); Serial.println(lIndex);
+    //Serial.print("maxIndex: "); Serial.println(maxIndex);
+    //Serial.print("rIndex: "); Serial.println(rIndex);
 
-    Serial.print("\nlIndexValue: "); Serial.println(getBoardValue(lIndex));
-    Serial.print("maxIndexValue: "); Serial.println(getBoardValue(maxIndex));
-    Serial.print("rIndexValue: "); Serial.println(getBoardValue(rIndex));
+    //Serial.print("\nlIndexValue: "); Serial.println(getBoardValue(lIndex));
+    //Serial.print("maxIndexValue: "); Serial.println(getBoardValue(maxIndex));
+    //Serial.print("rIndexValue: "); Serial.println(getBoardValue(rIndex));
 
-    Serial.print("\nmotorRightEnable: "); Serial.println(motorRightEnable);
-    Serial.print("motorLeftEnable: "); Serial.println(motorLeftEnable);
+    //Serial.print("\nmotorRightEnable: "); Serial.println(motorRightEnable);
+    //Serial.print("motorLeftEnable: "); Serial.println(motorLeftEnable);
 
+	// Если нужно в право
     if (rightPosition) {
+		// Если мотор влючён
         if (motorRightEnable) {
+			// Если разница между сторонами меньше чем минимально допустимая
             if (getBoardValue(maxIndex) - getBoardValue(rIndex) < MIN_LIGHT_DIFFERENS) {
-                motorRight.writeMicroseconds(PWM_MIN); // stop
+				// Останавливаемся
+                motorRight.writeMicroseconds(PWM_MIN);
                 motorRightEnable = false;
             }
         }
         else {
+			// Если разница между сторонами больше предельно допустимой
             if (getBoardValue(maxIndex) - getBoardValue(rIndex) > MAX_LIGHT_DIFFERENS) {
-                motorRight.writeMicroseconds(PWM_CENTER); // start
+				// Начинаем вращения
+                motorRight.writeMicroseconds(PWM_CENTER);
                 motorRightEnable = true;
             }
         }
     }
+	// Тоже самое, но в другую сторону
     else {
         if (motorLeftEnable) {
             if (getBoardValue(maxIndex) - getBoardValue(lIndex) < MIN_LIGHT_DIFFERENS) {
-                motorLeft.writeMicroseconds(PWM_MIN); // stop
+                // Останавливаемся
+                motorLeft.writeMicroseconds(PWM_MIN);
                 motorLeftEnable = false;
             }
         }
         else {
             if (getBoardValue(maxIndex) - getBoardValue(lIndex) > MAX_LIGHT_DIFFERENS) {
-                motorLeft.writeMicroseconds(PWM_CENTER); // start
+                // Начинаем вращения
+                motorLeft.writeMicroseconds(PWM_CENTER);
                 motorLeftEnable = true;
             }
         }
@@ -198,18 +224,21 @@ void updatePhtValues() {
 }
 
 // Функции чтения и преобразования
+// Сжатие данных, для более быстрой передачи
 uint32_t floatToUint32(float value, int32_t minValue, int32_t maxValue, int32_t resolution) {
     if (minValue <= value && value <= maxValue) {
         return (value - minValue) * resolution/ (maxValue - minValue);
     }
     else { return 0; }
 }
+// Чтение float с консоли
 bool parseFloat(float *f) {
     do { *f = Serial.parseFloat(SKIP_NONE); }
     while(*f == 0);
     Serial.print(*f);
     return true;
 }
+// Чтение bool с консоли
 bool parseBool() {
     char c = 0;
     while(c != 'y' && c != 'n' && c != 'Y' && c != 'N') {
@@ -231,103 +260,93 @@ void calibrationPht() {
     delay(500);
     Serial.print('\n');
 
-    uint8_t step = 0, phase = 0, measureCount = 10;
+	// measureCount - количество измерений для усреднения
+    uint8_t phtIndex = 0, phase = 0, measureCount = 50;
+	// updateDelay - Задержка обновления данных в консоли о фоторезисторе
     uint16_t updateDelay = 150;
-    Range furstPhtRange, secondPhtRange;
+    Range phtRange;
     uint32_t timeCounter = 0;
-    while(step != 4) {
+
+    while(phtIndex <= 7) {
+        // Обновление данных в консоли
         if (timeCounter < millis()) {
-            if (phase == 0) { Serial.print(F("Текущее значение минимума фоторезисторов (")); }
-            else { Serial.print(F("Текущее значение максимума фоторезисторов (")); }
-
-            Serial.print(step*2 + 1); Serial.print(F(") и (")); Serial.print(step*2 + 2); Serial.print("): ");
-            Serial.print(mcp3008.readADC(step*2)); Serial.print(' '); Serial.println(mcp3008.readADC(step*2 + 1));
-
+            if (phase == 0) { Serial.print(F("Текущее значение минимума фоторезистора (")); }
+            else { Serial.print(F("Текущее значение максимума фоторезистора (")); }
+            Serial.print(phtIndex + 1); Serial.print("): "); Serial.println(mcp3008.readADC(phtIndex + 1));
             timeCounter = millis() + updateDelay;
         }
+        /* Если пришла команда с консоли
+        Список команд:
+        C1 - Следующий шаг
+        C2 - Изменение задержки (updateDelay) перед обновлением данных (1 число int)
+        C3 - Изменение количества измерений (measureCount) для усреднения значений (1 число int)
+        C4 - Прервать процедуру калибровки */
         while(Serial.available()) {
             if (Serial.read() == 'C') {
                 int32_t request = Serial.parseInt(SKIP_NONE);
                 if (!request) { serialRequestInvalid(); continue; }
 
                 switch (request) {
-                    case 1: {
-                        if(phase == 0) {
-                            furstPhtRange.min = 0;
-                            secondPhtRange.min = 0;
+                    case 1: { // Следующий шаг
+
+                        if(phase == 0) { // Если сейчас идёт поиск минимального порога
+							// Среднее из measureCount значений
+                            phtRange.min = 0;
                             for (uint8_t i = 0; i < measureCount; ++i) {
-                                furstPhtRange.min += mcp3008.readADC(step*2);
-                                secondPhtRange.min += mcp3008.readADC(step*2 + 1);
+                                phtRange.min += mcp3008.readADC(phtIndex);
                             }
-                            furstPhtRange.min /= measureCount;
-                            secondPhtRange.min /= measureCount;
+                            phtRange.min /= measureCount;
 
                             Serial.print(F("\nСредний минимум из "));
                             Serial.print(measureCount);
-                            Serial.print(F(" значений для фоторезисторов ("));
-                            Serial.print(step*2 + 1);
-                            Serial.print(F(") и ("));
-                            Serial.print(step*2 + 2);
+                            Serial.print(F(" значений для фоторезистора ("));
+                            Serial.print(phtIndex + 1);
                             Serial.print("): ");
-                            Serial.print(furstPhtRange.min);
-                            Serial.print(' ');
-                            Serial.print(secondPhtRange.min);
+                            Serial.print(phtRange.min);
 
+							// Отмена или продолжение
                             Serial.print(F("\nПродолжить? (y\\n): "));
                             if (!parseBool()) { Serial.println('\n'); continue; }
                             Serial.println('\n');
                             ++phase;
                         }
-                        else {
-                            furstPhtRange.max = 0;
-                            secondPhtRange.max = 0;
+                        else { // Если сейчас идёт поиск максимального порога
+							// Среднее из measureCount значений
+                            phtRange.max = 0;
                             for (uint8_t i = 0; i < measureCount; ++i) {
-                                furstPhtRange.max += mcp3008.readADC(step*2);
-                                secondPhtRange.max += mcp3008.readADC(step*2 + 1);
+                                phtRange.max += mcp3008.readADC(phtIndex);
                             }
-                            furstPhtRange.max /= measureCount;
-                            secondPhtRange.max /= measureCount;
+                            phtRange.max /= measureCount;
 
                             Serial.print(F("\nСредний максимум из "));
                             Serial.print(measureCount);
-                            Serial.print(F(" значений для фоторезисторов ("));
-                            Serial.print(step*2 + 1);
-                            Serial.print(F(") и ("));
-                            Serial.print(step*2 + 2);
+                            Serial.print(F(" значений для фоторезистора ("));
+                            Serial.print(phtIndex + 1);
                             Serial.print("): ");
-                            Serial.print(furstPhtRange.max);
-                            Serial.print(' ');
-                            Serial.print(secondPhtRange.max);
+                            Serial.print(phtRange.max);
 
-                            calcRange(furstPhtRange.min, furstPhtRange.max, minAbsoluteValue, maxAbsoluteValue,
-                                      &phtCalibRange[step*2].min, &phtCalibRange[step*2].max);
-                            calcRange(secondPhtRange.min, secondPhtRange.max, minAbsoluteValue, maxAbsoluteValue,
-                                      &phtCalibRange[step*2 + 1].min, &phtCalibRange[step*2 + 1].max);
+							// Вычисление полного истинного диапазона измерения фоторезистора
+                            calcRange(phtRange.min, phtRange.max, minAbsoluteValue, maxAbsoluteValue,
+                                      &phtCalibRange[phtIndex].min, &phtCalibRange[phtIndex].max);
 
                             Serial.print(F("\nДиапазон измерений фоторезистора ("));
-                            Serial.print(step*2 + 1);
+                            Serial.print(phtIndex + 1);
                             Serial.print("): ");
-                            Serial.print(phtCalibRange[step*2].min);
+                            Serial.print(phtCalibRange[phtIndex].min);
                             Serial.print(' ');
-                            Serial.print(phtCalibRange[step*2].max);
+                            Serial.print(phtCalibRange[phtIndex].max);
 
-                            Serial.print(F("\nДиапазон измерений фоторезистора ("));
-                            Serial.print(step*2 + 2);
-                            Serial.print("): ");
-                            Serial.print(phtCalibRange[step*2 + 1].min);
-                            Serial.print(' ');
-                            Serial.print(phtCalibRange[step*2 + 1].max);
-
-
+							// Отмена или продолжение
                             Serial.print(F("\nПродолжить? (y\\n): "));
                             if (!parseBool()) { Serial.println('\n'); continue; }
                             Serial.println('\n');
 
+							// Теперь нужен минимум
                             phase = 0;
-                            ++step;
+                            ++phtIndex;
                         }
                         break; }
-                    case 2: {
+                    case 2: { // Изменение задержки
                         Serial.read();
                         int32_t value = Serial.parseInt(SKIP_NONE);
                         if (value <= 0) { Serial.print(F("Некорректные параметры команды\n")); break; }
@@ -335,7 +354,7 @@ void calibrationPht() {
                         updateDelay = value;
                         while(Serial.available() && Serial.read() != '\n') {}
                         break; }
-                    case 3: {
+                    case 3: { // Изменение количества измерений
                         Serial.read();
                         int32_t value = Serial.parseInt(SKIP_NONE);
                         if (value <= 0) { Serial.print(F("Некорректные параметры команды\n")); break; }
@@ -343,7 +362,7 @@ void calibrationPht() {
                         measureCount = value;
                         while(Serial.available() && Serial.read() != '\n') {}
                         break; }
-                    case 4: {
+                    case 4: { // Прерывание калибровки
                         Serial.print(F("\nКалибровка прервана\n"));
                         while(Serial.available() && Serial.read() != '\n') {}
                         return; }
@@ -365,28 +384,36 @@ void calibrationPht() {
     }
     Serial.print(F("Следует вызвать команду \"K72\", чтобы сохранить данные в EEPROM\n"));
 }
+// Сохранение phtCalibRange в EEPROM
 void savePhtCalibRange() {
-    uint8_t data[sizeof(Range)];
-    memcpy(data, phtCalibRange, sizeof(Range));
+    uint8_t data[sizeof(Range)*8];
+    memcpy(data, phtCalibRange, sizeof(Range)*8);
 
-    for(uint8_t i = EEPROM_PHT_OFFSET; i < EEPROM_PHT_OFFSET+sizeof(Range); ++i) {
+    for(uint8_t i = EEPROM_PHT_ADDRESS; i < EEPROM_PHT_ADDRESS+sizeof(Range)*8; ++i) {
         EEPROM.update(i, data[i]);
     }
 }
+// Загрузка phtCalibRange из EEPROM
 void loadPhtCalibRange() {
-    uint8_t data[sizeof(Range)];
-    for(uint8_t i = EEPROM_PHT_OFFSET; i < EEPROM_PHT_OFFSET+sizeof(Range); ++i) {
+    uint8_t data[sizeof(Range)*8];
+    for(uint8_t i = EEPROM_PHT_ADDRESS; i < EEPROM_PHT_ADDRESS+sizeof(Range)*8; ++i) {
         data[i] = EEPROM.read(i);
     }
-    memcpy(phtCalibRange, data, sizeof(Range));
+    memcpy(phtCalibRange, data, sizeof(Range)*8);
 }
 bool calcRange(float minADC, float maxADC, float minValue, float maxValue, float *minRange, float *maxRange) {
+	// Минимальный процент, на который был использован фоторезистор
     float minValuePr = minADC/10.23f;
+	// Максимальный процент, на который был использован фоторезистор
     float maxValuePr = maxADC/10.23f;
 
+	// Проверка деления на ноль
     if (maxValuePr == minValuePr) { return false; }
+
+	// Количество единиц в одном проценте
     float UnitPerPr = (maxValue - minValue) / (maxValuePr - minValuePr);
 
+	// Истинное минимальное и максимальное значение
     *minRange = minValue - minValuePr*UnitPerPr;
     *maxRange = maxValue + (100 - maxValuePr)*UnitPerPr;
 
@@ -394,8 +421,20 @@ bool calcRange(float minADC, float maxADC, float minValue, float maxValue, float
 }
 
 // Запрос по Serial
+/* Список команд
+K1 - Проверка
+K10 - Начать калибровку фоторезисторов
+K31 - Вывести давление и температуру
+K35 - Вывести угол Эйлера
+K42 - Вывести значения фоторезисторов
+K43 - Вывести сырые значения фоторезисторов
+K70 - Вывести калибровочные значение для фоторезисторов
+K71 - Ввести калибровочные значение для фоторезисторов (16 чисел float)
+K72 - Сохранить калибровочные значение для фоторезисторов в EEPROM
+*/
 void serialRequest() {
 	while(Serial.available()) {
+		// Если пришла K - команда
 		if (Serial.read() == 'K') {
 			int32_t request = Serial.parseInt(SKIP_NONE);
 			if (!request) { serialRequestInvalid(); continue; }
@@ -412,6 +451,8 @@ void serialRequest() {
 				case 42: serialRequest_42(); break;
 				case 43: serialRequest_43(); break;
 				case 70: serialRequest_70(); break;
+				case 71: serialRequest_71(); break;
+				case 72: serialRequest_72(); break;
 				default: serialRequestIndefined(request);
 			}
 			while(Serial.available() && Serial.read() != '\n') {}
@@ -450,7 +491,7 @@ void serialRequest_42() {
         Serial.print(F("Значение фоторезистора ("));
         Serial.print(i + 1);
         Serial.print(F("): "));
-        Serial.println(map(phtValues[i], 0, 1023, phtCalibRange[i].min, phtCalibRange[i].max));
+        Serial.println(getPhtValue(i));
     }
 	Serial.print(F("OK\n"));
 }
@@ -468,11 +509,31 @@ void serialRequest_70() {
         Serial.print(F("Диапазон измерений фоторезистора ("));
         Serial.print(i + 1);
         Serial.print(F("): "));
-        Serial.println(phtCalibRange[i].min);
+        Serial.print(phtCalibRange[i].min);
         Serial.print(' ');
         Serial.println(phtCalibRange[i].max);
     }
 	Serial.print(F("OK\n"));
+}
+void serialRequest_71() {
+    Range tempPhtCalibRange[8] = {};
+    for (uint8_t i = 0; i < 8; ++i) {
+        tempPhtCalibRange[i].min = Serial.parseFloat();
+        tempPhtCalibRange[i].max = Serial.parseFloat();
+        Serial.print(tempPhtCalibRange[i].min); Serial.print(' '); Serial.println(tempPhtCalibRange[i].max);
+    }
+    if (Serial.parseFloat() != 0) { serialRequestToManyParam(); return; }
+
+    for (uint8_t i = 0; i < 8; ++i) {
+        phtCalibRange[i].min = tempPhtCalibRange[i].min;
+        phtCalibRange[i].max = tempPhtCalibRange[i].max;
+    }
+
+	Serial.print(F("OK\n"));
+}
+void serialRequest_72() {
+    savePhtCalibRange();
+    Serial.print(F("OK\n"));
 }
 void printMillisTime(uint32_t time) {
 	Serial.print(F("Время с момента старта МК: "));
@@ -508,22 +569,25 @@ void printMillisTime(uint32_t time) {
 	else { Serial.print(F(" секунд\n")); }
 }
 void serialRequestInvalid() {
-	Serial.print(F("Команда не разпознана...\n"));
+	Serial.print(F("Команда не распознана...\n"));
 }
 void serialRequestIndefined(int32_t request) {
 	Serial.print(F("Команда \"")); Serial.print(request); Serial.print(F("\" недействительна...\n"));
 }
-
+void serialRequestToManyParam() {
+    Serial.print(F("Ошибка: параметров больше, чем ожидалось\n"));
+}
 // Запросы по I2C
 void onReceiveI2C(int count) {
     while(count) {
         lastRequestI2C = Wire.read();
+		// lastRequestI2C - номер команды
         --count;
     }
 }
 void onRequestI2C() {
     switch (lastRequestI2C) {
-    case 31: {
+    case 31: { // Сжатие и отправка данных IMU
         uint8_t data[23];
         uint32_t value;
 
@@ -557,13 +621,13 @@ void onRequestI2C() {
         for (uint8_t i = 0; i < 23; ++i) { Wire.write(data[i]); }
         break;
     }
-    case 43: {
+    case 43: { // Отправка данных с АЦП
         uint8_t data[16];
         memcpy(data, phtValues, 16);
         for (uint8_t i = 0; i < 16; ++i) { Wire.write(data[i]); }
         break;
     }
-    case 70: {
+    case 70: { // Отправка диапазона измерений фоторезисторов
         uint8_t data[4];
         for (uint8_t i = 0; i < 8; ++i) {
             memcpy(data, &phtCalibRange[i].min, sizeof(float));
@@ -574,6 +638,7 @@ void onRequestI2C() {
         break;
     }
     };
+	// Команда выполнена
     lastRequestI2C = 0;
 }
 
