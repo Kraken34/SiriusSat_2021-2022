@@ -23,6 +23,9 @@
 #define NRF_RX_PACKET_SIZE 20
 #define NRF_TX_PACKET_SIZE 32
 
+#include <SD.h>
+#define PIN_CHIP_SELECT 8
+
 // Мнимально допустимый интревал
 #define MIN_INTERVAL_VALUE 10
 #define gpsUpdateInterval 1000
@@ -32,14 +35,21 @@
 #define sdWriteInterval   1000
 
 // Флаги
+#define SD_CARD_INITIALIZATRED 0x04
 #define GPS_READY              0x08
 uint8_t FLAGS = 0;
 
 SoftwareSerial gpsSerial(RX_GPS_PIN, TX_GPS_PIN);
+File           logfile;
 GPS            gps(gpsSerial);
 RF24           nrf24(9, 10);
 
 struct Vector {
+	float x = 0;
+	float y = 0;
+	float z = 0;
+};
+struct Euler {
 	float x = 0;
 	float y = 0;
 	float z = 0;
@@ -62,14 +72,17 @@ uint8_t stlCount = 0;
 // Дата и время с GPS
 Datetime gpsDatetime;
 // Координаты
-float gpsLatitude = 35,  gpsLongitude = 56, gpsAltitude = 200, azimut = 90;
+float gpsLatitude = 35,  gpsLongitude = 56, gpsAltitude = 200, azimut = 90, altitude = 233;
 // Скорость
 int16_t gpsSpeed = 35;
+// Напряжения
+float mainVoltage = 0, batteryVoltage = 0, solarVoltage = 0;
 // Остальное
 float press = 96000, temp = 22.5;
 uint16_t phtValues[8] = {300, 300, 500, 500, 700, 700, 1024, 1024};
 Range phtCalibRange[8];
 Vector gyro = {567, -456, 56.78}, acl = {400, 20, 4540}, mgn = {-2344, 455, 859};
+Euler rotateAngle = {30, -60, 90};
 
 void updateGPSData() {
   if (gps.available()) {
@@ -375,6 +388,45 @@ void printMillisTime(uint32_t time) {
 	else { Serial.print(F(" секунд\n")); }
 }
 
+// Запись данных на карту
+void sdWriteData() {
+	logfile = SD.open("log.csv", FILE_WRITE);
+	
+	//dev|stlCount|mVolt|bVolt|sVolt|press|term|azimut|gyX|gyY|gyZ|aX|aY|aZ|mX|mY|mZ|eX|eY|eZ|pAlt|gAlt|gLat|gLon|gSpeed|year|month|day|hour|minute|second
+	logfile.print(stlCount); logfile.print('|');
+	logfile.print(mainVoltage); logfile.print('|');
+	logfile.print(batteryVoltage); logfile.print('|');
+	logfile.print(solarVoltage); logfile.print('|');
+	logfile.print(press); logfile.print('|');
+	logfile.print(temp); logfile.print('|');
+	logfile.print(azimut); logfile.print('|');
+	logfile.print(gyro.x); logfile.print('|');
+	logfile.print(gyro.y); logfile.print('|');
+	logfile.print(gyro.z); logfile.print('|');
+	logfile.print(acl.x); logfile.print('|');
+	logfile.print(acl.y); logfile.print('|');
+	logfile.print(acl.z); logfile.print('|');
+	logfile.print(mgn.x); logfile.print('|');
+	logfile.print(mgn.y); logfile.print('|');
+	logfile.print(mgn.z); logfile.print('|');
+	logfile.print(rotateAngle.x); logfile.print('|');
+	logfile.print(rotateAngle.y); logfile.print('|');
+	logfile.print(rotateAngle.z); logfile.print('|');
+	logfile.print(altitude); logfile.print('|');
+	logfile.print(gpsAltitude); logfile.print('|');
+	logfile.print(gpsLatitude); logfile.print('|');
+	logfile.print(gpsLongitude); logfile.print('|');
+	logfile.print(gpsSpeed); logfile.print('|');
+	logfile.print(gpsDatetime.year); logfile.print('|');
+	logfile.print(gpsDatetime.month); logfile.print('|');
+	logfile.print(gpsDatetime.day); logfile.print('|');
+	logfile.print(gpsDatetime.hour); logfile.print('|');
+	logfile.print(gpsDatetime.minute); logfile.print('|');
+	logfile.print(gpsDatetime.second); logfile.print('|');
+	logfile.print(millis()); logfile.print('\n');
+	
+	logfile.close();
+}
 
 // Запрос с земли
 void nrf24Request() {
@@ -401,6 +453,8 @@ void setup() {
     uint32_t imuSendTimeMark = 0;
     uint32_t gpsSendTimeMark = 0;
     uint32_t phtSendTimeMark = 0;
+	
+	uint32_t sdWriteTimeMark = 0;
 
     while(true) {
 	    if (gpsUpdateTimeMark < millis() && gpsUpdateInterval >= MIN_INTERVAL_VALUE) {
@@ -427,6 +481,19 @@ void setup() {
                 phtSendTimeMark = millis() + phtSendInterval;
 		    }
 		    else { phtSendTimeMark = millis() + phtSendInterval/10; }
+	    }
+		if (sdWriteTimeMark < millis() && sdWriteInterval >= MIN_INTERVAL_VALUE) {
+            // Чтобы сразу инициализировать карту, при её подключении
+            if (FLAGS&SD_CARD_INITIALIZATRED) {
+                sdWriteData();
+				sdWriteTimeMark = millis() + sdWriteInterval;
+            }
+		    else if (SD.begin(PIN_CHIP_SELECT)) {
+		        FLAGS |= SD_CARD_INITIALIZATRED;
+                sdWriteData();
+                sdWriteTimeMark = millis() + sdWriteInterval;
+		    }
+            else { sdWriteTimeMark = millis() + sdWriteInterval/2; }
 	    }
 	    if (nrf24.available()) {
             nrf24Request();
