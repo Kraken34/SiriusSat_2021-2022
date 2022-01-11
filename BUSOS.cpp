@@ -18,23 +18,26 @@
 #define I2C_BUEMU 0x2
 #define I2C_BUSOS 0x3
 
-#define MOTOR_1_PIN     12
-#define MOTOR_2_PIN     10
-#define MOTOR_RESET_PIN 4
+#define MOTOR_1_PIN         12
+#define MOTOR_2_PIN         10
+#define MOTOR_RESET_PIN     4
+#define MIN_LIGHT_DIFFERENS 5
+#define MAX_LIGHT_DIFFERENS 30
+#define PWM_MIN             1000
+#define PWM_CENTER          1500
+#define PWM_MAX             2000
 
 MCP3008       mcp3008(MCP3008_CLK, MCP3008_DIN, MCP3008_DOUT, MCP3008_CS);
 Gyroscope     gyroscope;
 Accelerometer accelerometer;
 Compass       compass;
 Barometer     barometer;
-Servo         motor_1;
-Servo         motor_2;
+Servo         motorLeft;
+Servo         motorRight;
 
-/* Интервалы, специально сделаны переменными, чтобы
-/* менять во время выполнения программы, но пока не реализовано */
-uint16_t IMU_Delay = 1000;
-uint16_t pht_Delay = 50;
-uint16_t pos_Delay = 50;
+#define imuTimeInterval 1000;
+#define phtTimeInterval 50;
+#define posTimeInterval 50;
 
 uint8_t lastRequestI2C = 0;
 
@@ -54,10 +57,12 @@ struct Range {
 };
 
 float press = 0, temp = 0, altitude = 0, azimut = 0;
-Vector gyro, acl, mgn;
-Euler rotateAngle;
+bool motorLeftEnable = false;
+bool motorRightEnable = false;
 uint16_t phtValues[8] = {};
 Range phtCalibRange[8];
+Vector gyro, acl, mgn;
+Euler rotateAngle;
 
 void motorReset() {
     delay(1000);
@@ -71,13 +76,13 @@ void motorReset() {
 void motorInit() {
     motorReset();
 
-    motor_1.writeMicroseconds(2000);
-    motor_2.writeMicroseconds(2000);
-    Serial.print("Speed: 2000\n");
+    motorLeft.writeMicroseconds(PWM_MAX);
+    motorRight.writeMicroseconds(PWM_MAX);
+    Serial.print("Max Speed: 2000\n");
     delay(3000);
-    motor_1.writeMicroseconds(1000);
-    motor_2.writeMicroseconds (1000);
-    Serial.print("Speed: 1000\n");
+    motorLeft.writeMicroseconds(PWM_MIN);
+    motorRight.writeMicroseconds (PWM_MIN);
+    Serial.print("Min Speed: 1000\n");
     delay(10000);
     Serial.print("Motor is ready...\n");
 }
@@ -88,12 +93,8 @@ float getBoardValue(int index) {
     return getLedValue(index*2) + getLedValue(index*2 + 1);
 }
 int findMax(int p1, int p2, int p3, int p4) {
-    int index = -1;
-    int m = -1;
-    if (p1 >= m) {
-        index = 0;
-        m = p1;
-    }
+    int index = 0;
+    int m = p1;
     if (p2 >= m) {
         index = 1;
         m = p2;
@@ -108,27 +109,21 @@ int findMax(int p1, int p2, int p3, int p4) {
     }
     return index;
 }
-#define MIN_INTERVAL 5
-#define MAX_INTERVAL 30
-bool motorLeftEnable = false;
-bool motorRightEnable = false;
-void setPosition() {
-
-    int p1 = getBoardValue(0);
-    int p2 = getBoardValue(1);
-    int p3 = getBoardValue(2);
-    int p4 = getBoardValue(3);
-    int maxIndex = findMax(p1, p2, p3, p4);
+void startPositioning() {
+    int boardValue_1 = getBoardValue(0);
+    int boardValue_2 = getBoardValue(1);
+    int boardValue_3 = getBoardValue(2);
+    int boardValue_4 = getBoardValue(3);
+    int maxIndex = findMax(boardValue_1, boardValue_2, boardValue_3, boardValue_4);
 
     int lIndex = maxIndex - 1;
     if (lIndex < 0) { lIndex = 3; }
     int rIndex = maxIndex + 1;
     if (rIndex > 3) { rIndex = 0; }
 
-    // motor_2 - right
     bool rightPosition = getBoardValue(rIndex) >= getBoardValue(lIndex);
-    if (rightPosition && motorLeftEnable) { motor_1.writeMicroseconds(1000); }
-    if (!rightPosition && motorRightEnable) { motor_2.writeMicroseconds(1000); }
+    if (rightPosition && motorLeftEnable) { motorLeft.writeMicroseconds(PWM_MIN); }
+    if (!rightPosition && motorRightEnable) { motorRight.writeMicroseconds(PWM_MIN); }
 
     Serial.print("\nStart\n");
     Serial.print("lIndex: "); Serial.println(lIndex);
@@ -144,28 +139,28 @@ void setPosition() {
 
     if (rightPosition) {
         if (motorRightEnable) {
-            if (getBoardValue(maxIndex) - getBoardValue(rIndex) < MIN_INTERVAL) {
-                motor_2.writeMicroseconds(1000); // stop
+            if (getBoardValue(maxIndex) - getBoardValue(rIndex) < MIN_LIGHT_DIFFERENS) {
+                motorRight.writeMicroseconds(PWM_MIN); // stop
                 motorRightEnable = false;
             }
         }
         else {
-            if (getBoardValue(maxIndex) - getBoardValue(rIndex) > MAX_INTERVAL) {
-                motor_2.writeMicroseconds(1500); // start
+            if (getBoardValue(maxIndex) - getBoardValue(rIndex) > MAX_LIGHT_DIFFERENS) {
+                motorRight.writeMicroseconds(PWM_CENTER); // start
                 motorRightEnable = true;
             }
         }
     }
     else {
         if (motorLeftEnable) {
-            if (getBoardValue(maxIndex) - getBoardValue(lIndex) < MIN_INTERVAL) {
-                motor_1.writeMicroseconds(1000); // stop
+            if (getBoardValue(maxIndex) - getBoardValue(lIndex) < MIN_LIGHT_DIFFERENS) {
+                motorLeft.writeMicroseconds(PWM_MIN); // stop
                 motorLeftEnable = false;
             }
         }
         else {
-            if (getBoardValue(maxIndex) - getBoardValue(lIndex) > MAX_INTERVAL) {
-                motor_1.writeMicroseconds(1500); // start
+            if (getBoardValue(maxIndex) - getBoardValue(lIndex) > MAX_LIGHT_DIFFERENS) {
+                motorLeft.writeMicroseconds(PWM_CENTER); // start
                 motorLeftEnable = true;
             }
         }
@@ -593,26 +588,26 @@ void setup() {
     Wire.onReceive(onReceiveI2C);
 
     pinMode(MOTOR_RESET_PIN, OUTPUT);
-    motor_1.attach(MOTOR_1_PIN);
-    motor_2.attach(MOTOR_2_PIN);
+    motorLeft.attach(MOTOR_1_PIN);
+    motorRight.attach(MOTOR_2_PIN);
     motorInit();
 
-    uint32_t IMUDelay = IMU_Delay + millis();
-    uint32_t phtDelay = pht_Delay + millis();
-    uint32_t posDelay = pos_Delay + millis();
+    uint32_t imuTimeMark = imuTimeInterval + millis();
+    uint32_t phtTimeMark = phtTimeInterval + millis();
+    uint32_t posTimeMark = posTimeInterval + millis();
 
     while(true) {
-	    if (IMUDelay < millis()) {
+	    if (imuTimeMark < millis()) {
 		    updateIMUData();
-		    IMUDelay = millis() + IMU_Delay;
+		    imuTimeMark = millis() + imuTimeInterval;
 	    }
-	    if (phtDelay < millis()) {
+	    if (phtTimeMark < millis()) {
 		    updatePhtValues();
-		    phtDelay = millis() + pht_Delay;
+		    phtTimeMark = millis() + phtTimeInterval;
 	    }
-	    if (posDelay < millis()) {
-            setPosition();
-            posDelay = millis() + pos_Delay;
+	    if (posTimeMark < millis()) {
+            startPositioning();
+            posTimeMark = millis() + posTimeInterval;
 	    }
 	    if (Serial.available()) {
 		    serialRequest();
